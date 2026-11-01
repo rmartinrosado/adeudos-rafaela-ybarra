@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v1.2';
+  const VERSION = 'v1.3';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -508,6 +508,35 @@
       const bic = t.form.bic; if (!bic.value) bic.value = S.bicDeIban(t.value);
     }
   });
+
+  /* ---------- Actualizar la app (código), sin tocar los datos ---------- */
+  const FICHEROS_APP = ['./', 'index.html', 'app.js', 'sepa.js', 'sw.js', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
+  async function actualizarApp() {
+    const btn = $('#upd');
+    if (!navigator.onLine) { alert('Sin conexión a internet. Conéctate y vuelve a pulsar Actualizar.'); return; }
+    btn.classList.add('girando');
+    try {
+      const txt = await (await fetch('app.js?nc=' + Date.now(), { cache: 'no-store' })).text();
+      const m = txt.match(/const VERSION = '([^']+)'/), nueva = m ? m[1] : '';
+      if (nueva && nueva === VERSION && !confirm('Ya tienes la última versión (' + VERSION + ').\n¿Recargar la app de todos modos?')) { btn.classList.remove('girando'); return; }
+      // Guardar los datos antes de nada (deudores, remesas y ajustes se conservan)
+      guardar();
+      // Descargar de nuevo todos los ficheros de la app saltándose la caché
+      await Promise.all(FICHEROS_APP.map(f => fetch(f, { cache: 'reload' }).catch(() => null)));
+      if ('caches' in window) { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); }
+      if ('serviceWorker' in navigator) { const rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(r => r.unregister())); }
+      sessionStorage.setItem('actualizadoDesde', VERSION);
+      location.replace(location.pathname + '?v=' + Date.now());
+    } catch (e) {
+      btn.classList.remove('girando');
+      alert('No se pudo actualizar: ' + e.message);
+    }
+  }
+  $('#upd').addEventListener('click', actualizarApp);
+  try {
+    const desde = sessionStorage.getItem('actualizadoDesde');
+    if (desde) { sessionStorage.removeItem('actualizadoDesde'); history.replaceState(null, '', location.pathname); setTimeout(() => toast(desde === VERSION ? 'App recargada · ' + VERSION : 'Actualizada de ' + desde + ' a ' + VERSION), 300); }
+  } catch (e) {}
 
   render();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
