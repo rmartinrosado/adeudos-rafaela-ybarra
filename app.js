@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v1.1';
+  const VERSION = 'v1.2';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -401,6 +401,7 @@
     const m = $('#main');
     m.innerHTML = tab === 'remesa' ? vistaRemesa() : tab === 'deudores' ? vistaDeudores() : tab === 'historial' ? vistaHistorial() : vistaAjustes();
     document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+    $('#ver').textContent = VERSION;
     $('#sub').textContent = st.config.direccion + ' · ' + st.config.localidad + (st.config.presidente ? ' · Pte. ' + st.config.presidente : '');
   }
 
