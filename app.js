@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v1.0';
+  const VERSION = 'v1.1';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -11,7 +11,8 @@
   /* ---------- Datos ---------- */
   function deudorBase(unidad, tipo, nombre, orden) {
     return { id: uid(), unidad, tipo, nombre: nombre || '', nif: '', iban: '', bic: '',
-      mandato: 'RY5-' + unidad, fechaMandato: '2009-10-31', previos: false, activo: true, orden };
+      mandato: 'RY5-' + unidad, fechaMandato: '2009-10-31', previos: false, activo: true, orden,
+      pago: tipo === 'local' ? 'efectivo' : 'domiciliado' };
   }
   function defaults() {
     const pisos = ['1A', '1B', '1C', '2A', '2B', '2C', '3A', '3B', '3C'];
@@ -33,11 +34,19 @@
   try { st = JSON.parse(localStorage.getItem(KEY)) || defaults(); } catch (e) { st = defaults(); }
   const dflt = defaults();
   st.config = Object.assign({}, dflt.config, st.config);
+  migrar();
+  function migrar() {
+    // v1.1: forma de pago por deudor (los locales pagan en efectivo)
+    st.deudores.forEach(d => { if (!d.pago) d.pago = d.tipo === 'local' ? 'efectivo' : 'domiciliado'; });
+    st.remesas.forEach(r => { if (!r.efectivo) r.efectivo = []; });
+  }
   function guardar() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { toast('No se pudo guardar en el dispositivo'); } }
 
   function etiqueta(d) { return d.tipo === 'local' ? 'LOCAL ' + d.unidad.replace(/^L/, '') : 'PISO ' + d.unidad; }
   function corto(d) { return d.tipo === 'local' ? 'L' + d.unidad.replace(/^L/, '') : d.unidad; }
   function ordenados() { return st.deudores.slice().sort((a, b) => (a.orden ?? 99) - (b.orden ?? 99)); }
+  const esEf = d => d.pago === 'efectivo';
+  const centAStr = c => (c / 100).toFixed(2).replace('.', ',');
   function idAcr() { return S.idAcreedor(st.config.nif, st.config.sufijo); }
 
   /* ---------- Borrador de remesa ---------- */
@@ -48,9 +57,13 @@
       st.borrador = { fechaGen: hoy, idx: p.idx, anio: p.anio, mesCobro: mesIso(p.anio, p.idx * 2),
         importes: {}, excluir: {}, formatos: { core: true, c1914: true, b2b: true, c1944: true } };
       const ult = ultimaRemesa();
-      if (ult) ult.items.forEach(i => { st.borrador.importes[i.deudorId] = (i.importe / 100).toFixed(2).replace('.', ','); });
+      if (ult) cargarImportes(ult);
     }
     return st.borrador;
+  }
+  function cargarImportes(r) {
+    const imp = st.borrador.importes;
+    r.items.concat(r.efectivo || []).forEach(i => { if (i.importe > 0) imp[i.deudorId] = centAStr(i.importe); });
   }
   function ultimaRemesa() { return st.remesas.slice().sort((a, b) => b.fechaCobro.localeCompare(a.fechaCobro))[0]; }
   function nombreActual() { const b = borrador(); return S.nombreRemesa(b.idx, b.anio); }
@@ -89,7 +102,7 @@
     if (!Object.values(b.formatos).some(Boolean)) errores.push('Marca al menos un formato de fichero.');
 
     const items = [];
-    ordenados().filter(d => d.activo && !b.excluir[d.id]).forEach(d => {
+    ordenados().filter(d => d.activo && !esEf(d) && !b.excluir[d.id]).forEach(d => {
       const imp = S.parseImporte(b.importes[d.id]);
       const lab = etiqueta(d);
       if (!d.nombre) errores.push(lab + ': falta el nombre del titular.');
@@ -106,14 +119,23 @@
         d1: c.direccion + ' ' + lab, d2: c.cp + ' ' + c.localidad, d3: c.provincia
       });
     });
-    if (!items.length) errores.push('No hay ningún deudor incluido en la remesa.');
+    if (!items.length) errores.push('No hay ningún deudor domiciliado incluido en la remesa.');
+    const previa = st.remesas.find(x => x.nombre === nombre);
+    const efectivo = ordenados().filter(d => d.activo && esEf(d)).map(d => {
+      const imp = S.parseImporte(b.importes[d.id]);
+      const ant = previa && (previa.efectivo || []).find(e => e.deudorId === d.id);
+      return { deudorId: d.id, unidad: d.unidad, nombre: d.nombre || etiqueta(d), etiqueta: etiqueta(d), importe: imp > 0 ? imp : 0,
+        cobrado: ant ? ant.cobrado : false, fechaPago: ant ? ant.fechaPago : '' };
+    });
+    const sinImp = efectivo.filter(e => !e.importe).map(e => e.etiqueta);
+    if (sinImp.length) avisos.push('Sin importe en efectivo: ' + sinImp.join(', ') + '.');
     if (b.formatos.b2b || b.formatos.c1944) avisos.push('B2B solo lo aceptan cuentas de empresas o autónomos con contrato B2B en su banco. Para particulares usa CORE.');
     const remesa = {
       nombre, fechaGen: b.fechaGen, fechaCobro: fc,
       acreedor: { nombre: c.nombre, id, iban: S.normIban(c.iban), bic: (c.bic || '').toUpperCase(), d1: c.direccion, d2: c.cp + ' ' + c.localidad, d3: c.provincia, pais: 'ES' },
       items
     };
-    return { errores, avisos, remesa };
+    return { errores, avisos, remesa, efectivo };
   }
 
   function ficheros(rem, f) {
@@ -148,8 +170,9 @@
   /* ---------- Pestaña Remesa ---------- */
   function vistaRemesa() {
     const b = borrador(), nombre = nombreActual(), fc = fechaCobro();
-    const ds = ordenados().filter(d => d.activo);
-    let total = 0, n = 0;
+    const ds = ordenados().filter(d => d.activo && !esEf(d));
+    const efs = ordenados().filter(d => d.activo && esEf(d));
+    let total = 0, n = 0, totEf = 0;
     const filas = ds.map(d => {
       const ex = !!b.excluir[d.id], imp = S.parseImporte(b.importes[d.id]);
       if (!ex && imp > 0) { total += imp; n++; }
@@ -163,6 +186,12 @@
         '<input class="amount" inputmode="decimal" placeholder="0,00 €" data-imp="' + d.id + '" value="' + esc(b.importes[d.id] || '') + '"' + (ex ? ' disabled' : '') + '>' +
         '</div>';
     }).join('');
+    const filasEf = efs.map(d => {
+      const imp = S.parseImporte(b.importes[d.id]); if (imp > 0) totEf += imp;
+      return '<div class="item"><div class="unit' + (d.tipo === 'local' ? ' local' : '') + '">' + esc(corto(d)) + '</div>' +
+        '<div class="grow"><div class="name">' + esc(d.nombre || etiqueta(d)) + '</div><div class="muted"><span class="chip ef">EFECTIVO</span></div></div>' +
+        '<input class="amount" inputmode="decimal" placeholder="0,00 €" data-imp="' + d.id + '" value="' + esc(b.importes[d.id] || '') + '"></div>';
+    }).join('');
     const per = S.BIMESTRES.map((t, i) => '<option value="' + i + '"' + (i === b.idx ? ' selected' : '') + '>' + t + '</option>').join('');
     const meses = opcionesMesCobro().map(o => '<option value="' + o.v + '"' + (o.v === b.mesCobro ? ' selected' : '') + '>10 de ' + o.t + '</option>').join('');
     const fm = b.formatos;
@@ -175,10 +204,13 @@
       '<div><label>Año</label><input type="number" inputmode="numeric" data-b="anio" value="' + b.anio + '"></div></div>' +
       '<label>Fecha de cobro (siempre día 10)</label><select data-b="mesCobro">' + meses + '</select></div>' +
 
-      '<div class="card"><h2>Importe bimensual por deudor</h2>' + (filas || '<div class="empty">No hay deudores activos.</div>') +
+      '<div class="card"><h2>Domiciliados · importe bimensual</h2>' + (filas || '<div class="empty">No hay deudores domiciliados activos.</div>') +
       '<div class="tot"><span class="muted" id="nRem">' + n + ' adeudos</span><span class="big" style="font-size:22px" id="totRem">' + S.eur(total) + '</span></div>' +
       '<div class="btns"><button class="btn sec sm" data-act="copiarUltima">Copiar importes de la última remesa</button>' +
       '<button class="btn sec sm" data-act="mismoImporte">Mismo importe a todos</button></div></div>' +
+      (efs.length ? '<div class="card"><h2>Cobros en efectivo</h2>' + filasEf +
+        '<div class="tot"><span class="muted">No van en el fichero del banco</span><span class="big" style="font-size:22px" id="totEf">' + S.eur(totEf) + '</span></div>' +
+        '<p class="muted">Se guardan con la remesa; en Historial puedes marcar cuándo los ha pagado cada local.</p></div>' : '') +
 
       '<div class="card"><h2>Ficheros a generar</h2>' +
       chk('core', 'XML SEPA · esquema CORE', 'pain.008.001.02 — el recomendado') +
@@ -202,9 +234,9 @@
     let files;
     try { files = ficheros(r.remesa, b.formatos); } catch (e) { alert('Error al generar: ' + e.message); return; }
     st.remesas = st.remesas.filter(x => x.nombre !== r.remesa.nombre);
-    st.remesas.push(Object.assign({ id: uid(), generado: new Date().toISOString(), formatos: Object.assign({}, b.formatos) }, r.remesa));
+    st.remesas.push(Object.assign({ id: uid(), generado: new Date().toISOString(), formatos: Object.assign({}, b.formatos), efectivo: r.efectivo }, r.remesa));
     guardar();
-    mostrarFicheros(r.remesa, files, r.avisos);
+    mostrarFicheros(st.remesas[st.remesas.length - 1], files, r.avisos);
     render();
   }
 
@@ -214,6 +246,7 @@
     const total = rem.items.reduce((s, i) => s + i.importe, 0);
     abrir('<div class="card"><h2>Ficheros listos</h2><div class="big">' + esc(rem.nombre) + '</div>' +
       '<div class="muted">' + rem.items.length + ' adeudos · ' + S.eur(total) + ' · cobro ' + fmtFecha(rem.fechaCobro) + '</div>' +
+      ((rem.efectivo || []).some(e => e.importe) ? '<div class="muted">Efectivo aparte (locales): ' + S.eur(rem.efectivo.reduce((s, e) => s + e.importe, 0)) + '</div>' : '') +
       (avisos && avisos.length ? '<div class="alert warn"><ul>' + avisos.map(e => '<li>' + esc(e) + '</li>').join('') + '</ul></div>' : '') +
       '<div style="margin-top:10px">' + files.map((f, i) =>
         '<div class="file"><div class="grow"><div class="mono">' + esc(f.name) + '</div><div class="muted">' + esc(f.etiqueta) + '</div></div>' +
@@ -226,13 +259,14 @@
   /* ---------- Pestaña Deudores ---------- */
   function vistaDeudores() {
     const filas = ordenados().map(d => {
-      const ok = d.nombre && S.ibanValido(d.iban);
+      const ok = esEf(d) ? !!d.nombre : d.nombre && S.ibanValido(d.iban);
       return '<div class="item" data-act="editar" data-id="' + d.id + '" style="cursor:pointer;' + (d.activo ? '' : 'opacity:.5') + '">' +
         '<div class="unit' + (d.tipo === 'local' ? ' local' : '') + '">' + esc(corto(d)) + '</div>' +
         '<div class="grow"><div class="name">' + (d.nombre ? esc(d.nombre) : '<span class="muted">Sin titular</span>') + '</div>' +
         '<div class="muted">' + esc(etiqueta(d)) + (d.nif ? ' · ' + esc(d.nif) : '') + '</div>' +
-        '<div class="muted mono">' + (d.iban ? esc(S.fmtIban(d.iban)) : '') + '</div></div>' +
-        '<span class="chip" style="' + (ok ? 'color:var(--ok)' : 'color:var(--err)') + '">' + (ok ? (d.activo ? 'OK' : 'Baja') : 'Incompleto') + '</span></div>';
+        (esEf(d) ? '' : '<div class="muted mono">' + (d.iban ? esc(S.fmtIban(d.iban)) : '') + '</div>') + '</div>' +
+        (esEf(d) && ok && d.activo ? '<span class="chip ef">Efectivo</span>' :
+        '<span class="chip" style="' + (ok ? 'color:var(--ok)' : 'color:var(--err)') + '">' + (ok ? (d.activo ? 'Domiciliado' : 'Baja') : 'Incompleto') + '</span>') + '</div>';
     }).join('');
     return '<div class="card"><h2>Deudores (' + st.deudores.length + ')</h2>' + filas +
       '<div class="btns"><button class="btn" data-act="nuevo">Añadir deudor</button></div></div>' +
@@ -245,15 +279,18 @@
     abrir('<div class="card"><h2>' + (nuevo ? 'Nuevo deudor' : esc(etiqueta(d))) + '</h2><form id="fd" data-id="' + (nuevo ? '' : d.id) + '">' +
       '<div class="row"><div><label>Tipo</label><select name="tipo"><option value="piso"' + (d.tipo === 'piso' ? ' selected' : '') + '>Piso</option><option value="local"' + (d.tipo === 'local' ? ' selected' : '') + '>Local</option></select></div>' +
       '<div><label>Piso / nº local</label><input name="unidad" value="' + esc(d.tipo === 'local' ? d.unidad.replace(/^L/, '') : d.unidad) + '" placeholder="1A ó 1" autocapitalize="characters"></div></div>' +
-      '<label>Nombre del titular de la cuenta</label><input name="nombre" value="' + esc(d.nombre) + '" autocomplete="off">' +
+      '<label>Forma de pago</label><select name="pago"><option value="domiciliado"' + (!esEf(d) ? ' selected' : '') + '>Domiciliado en banco (va en la remesa)</option>' +
+      '<option value="efectivo"' + (esEf(d) ? ' selected' : '') + '>Efectivo (no va en el fichero)</option></select>' +
+      '<label>Nombre (titular de la cuenta si es domiciliado)</label><input name="nombre" value="' + esc(d.nombre) + '" autocomplete="off">' +
       '<label>DNI / NIE / NIF</label><input name="nif" value="' + esc(d.nif) + '" autocapitalize="characters" autocomplete="off">' +
+      '<div id="bancoCampos"' + (esEf(d) ? ' hidden' : '') + '>' +
       '<label>IBAN de cargo</label><input name="iban" class="mono" value="' + esc(S.fmtIban(d.iban)) + '" placeholder="ES00 0000 0000 0000 0000 0000" autocapitalize="characters" autocomplete="off">' +
       '<div id="ibanMsg" class="muted"></div>' +
       '<label>BIC del banco (opcional, se rellena solo)</label><input name="bic" value="' + esc(d.bic) + '" autocapitalize="characters">' +
       '<div class="row"><div><label>Ref. mandato</label><input name="mandato" value="' + esc(d.mandato) + '" autocapitalize="characters"></div>' +
       '<div><label>Firma mandato</label><input type="date" name="fechaMandato" value="' + esc(d.fechaMandato) + '"></div></div>' +
       '<p class="muted">Si ya se le cobraba por domiciliación antes, deja la referencia y fecha que use el banco. 31/10/2009 es la fecha estándar de las domiciliaciones migradas a SEPA.</p>' +
-      '<label class="check"><input type="checkbox" name="previos"' + (d.previos ? ' checked' : '') + '><span>Ya tuvo cobros domiciliados antes (usar RCUR)</span></label>' +
+      '<label class="check"><input type="checkbox" name="previos"' + (d.previos ? ' checked' : '') + '><span>Ya tuvo cobros domiciliados antes (usar RCUR)</span></label></div>' +
       '<label class="check"><input type="checkbox" name="activo"' + (d.activo ? ' checked' : '') + '><span>Activo en las remesas</span></label>' +
       '<div class="btns"><button type="submit" class="btn">Guardar</button><button type="button" class="btn sec" data-act="cerrar">Cancelar</button></div>' +
       (nuevo ? '' : '<div class="btns"><button type="button" class="btn danger" data-act="borrarDeudor" data-id="' + d.id + '">Eliminar deudor</button></div>') +
@@ -274,10 +311,10 @@
     if (tipo === 'local') unidad = 'L' + unidad.replace(/^L/, '');
     if (st.deudores.some(x => x.unidad === unidad && x.id !== id)) { alert('Ya existe un deudor para ' + unidad + '.'); return; }
     const iban = S.normIban(f.iban.value);
-    if (iban && !S.ibanValido(iban) && !confirm('El IBAN no es válido. ¿Guardar de todos modos?')) return;
+    if (f.pago.value !== 'efectivo' && iban && !S.ibanValido(iban) && !confirm('El IBAN no es válido. ¿Guardar de todos modos?')) return;
     const nif = f.nif.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (nif && !S.validarNif(nif).ok && !confirm('El DNI/NIF no parece correcto. ¿Guardar de todos modos?')) return;
-    const datos = { tipo, unidad, nombre: f.nombre.value.trim(), nif, iban, bic: f.bic.value.toUpperCase().replace(/[^A-Z0-9]/g, '') || S.bicDeIban(iban),
+    const datos = { pago: f.pago.value, tipo, unidad, nombre: f.nombre.value.trim(), nif, iban, bic: f.bic.value.toUpperCase().replace(/[^A-Z0-9]/g, '') || S.bicDeIban(iban),
       mandato: S.limpiar(f.mandato.value).toUpperCase() || ('RY5-' + unidad), fechaMandato: f.fechaMandato.value, previos: f.previos.checked, activo: f.activo.checked };
     if (id) Object.assign(st.deudores.find(x => x.id === id), datos);
     else st.deudores.push(Object.assign(deudorBase(unidad, tipo, '', st.deudores.length), datos));
@@ -290,20 +327,28 @@
     if (!rs.length) return '<div class="card"><h2>Historial</h2><div class="empty">Aún no has generado ninguna remesa.</div></div>';
     return '<div class="card"><h2>Historial</h2>' + rs.map(r => {
       const t = r.items.reduce((s, i) => s + i.importe, 0);
+      const ef = (r.efectivo || []).filter(e => e.importe > 0), pend = ef.filter(e => !e.cobrado);
       return '<div class="item"><div class="grow"><div class="name">' + esc(r.nombre) + '</div>' +
         '<div class="muted">Cobro ' + fmtFecha(r.fechaCobro) + ' · generada ' + fmtFecha(r.fechaGen) + ' · ' + r.items.length + ' adeudos</div>' +
-        '<div style="font-weight:700">' + S.eur(t) + '</div>' +
+        '<div style="font-weight:700">Banco ' + S.eur(t) + (ef.length ? ' · Efectivo ' + S.eur(ef.reduce((s, e) => s + e.importe, 0)) : '') + '</div>' +
+        (ef.length ? '<div class="muted" style="color:' + (pend.length ? 'var(--warn)' : 'var(--ok)') + '">' +
+          (pend.length ? 'Efectivo pendiente: ' + pend.map(e => esc(e.etiqueta)).join(', ') + ' (' + S.eur(pend.reduce((s, e) => s + e.importe, 0)) + ')' : 'Efectivo cobrado completo') + '</div>' : '') +
         '<div class="btns" style="margin-top:6px"><button class="btn sec sm" data-act="histFich" data-id="' + r.id + '">Ficheros</button>' +
-        '<button class="btn sec sm" data-act="histDetalle" data-id="' + r.id + '">Detalle</button>' +
+        '<button class="btn sec sm" data-act="histDetalle" data-id="' + r.id + '">' + (ef.length ? 'Detalle y efectivo' : 'Detalle') + '</button>' +
         '<button class="btn sec sm" data-act="histUsar" data-id="' + r.id + '">Usar importes</button>' +
         '<button class="btn danger sm" data-act="histBorrar" data-id="' + r.id + '">Borrar</button></div></div></div>';
     }).join('') + '</div>';
   }
   function detalle(r) {
     abrir('<div class="card"><h2>' + esc(r.nombre) + '</h2><div class="muted">Cobro ' + fmtFecha(r.fechaCobro) + '</div>' +
-      r.items.map(i => '<div class="item"><div class="unit">' + esc(i.unidad.startsWith('L') ? i.unidad : i.unidad) + '</div><div class="grow"><div class="name">' + esc(i.nombre) +
+      r.items.map(i => '<div class="item"><div class="unit">' + esc(i.unidad) + '</div><div class="grow"><div class="name">' + esc(i.nombre) +
         '</div><div class="muted"><span class="chip ' + i.seq.toLowerCase() + '">' + i.seq + '</span> ···' + esc(i.iban.slice(-4)) + '</div></div><b>' + S.eur(i.importe) + '</b></div>').join('') +
-      '<div class="tot"><span class="muted">Total</span><span class="big" style="font-size:22px">' + S.eur(r.items.reduce((s, i) => s + i.importe, 0)) + '</span></div>' +
+      '<div class="tot"><span class="muted">Total banco</span><span class="big" style="font-size:22px">' + S.eur(r.items.reduce((s, i) => s + i.importe, 0)) + '</span></div>' +
+      ((r.efectivo || []).some(e => e.importe) ? '<h2 style="margin-top:18px">Efectivo</h2>' + r.efectivo.filter(e => e.importe).map(e =>
+        '<div class="item"><input type="checkbox" data-efc="' + r.id + '|' + e.deudorId + '"' + (e.cobrado ? ' checked' : '') + ' aria-label="Cobrado">' +
+        '<div class="unit local">' + esc(e.unidad) + '</div><div class="grow"><div class="name">' + esc(e.nombre) + '</div><div class="muted">' +
+        (e.cobrado ? '<span style="color:var(--ok)">Cobrado ' + fmtFecha(e.fechaPago) + '</span>' : '<span style="color:var(--warn)">Pendiente</span>') + '</div></div><b>' + S.eur(e.importe) + '</b></div>').join('') +
+        '<p class="muted">Marca la casilla cuando el local entregue el efectivo.</p>' : '') +
       '<div class="btns"><button class="btn sec" data-act="cerrar">Cerrar</button></div></div>');
   }
 
@@ -344,8 +389,10 @@
 
   function actualizarTotal() {
     const b = borrador(); let total = 0, n = 0;
-    st.deudores.filter(d => d.activo && !b.excluir[d.id]).forEach(d => { const c = S.parseImporte(b.importes[d.id]); if (c > 0) { total += c; n++; } });
-    const tEl = $('#totRem'), nEl = $('#nRem'); if (tEl) tEl.textContent = S.eur(total); if (nEl) nEl.textContent = n + ' adeudos';
+    let ef = 0;
+    st.deudores.filter(d => d.activo && !esEf(d) && !b.excluir[d.id]).forEach(d => { const c = S.parseImporte(b.importes[d.id]); if (c > 0) { total += c; n++; } });
+    st.deudores.filter(d => d.activo && esEf(d)).forEach(d => { const c = S.parseImporte(b.importes[d.id]); if (c > 0) ef += c; });
+    const tEl = $('#totRem'), nEl = $('#nRem'), eEl = $('#totEf'); if (tEl) tEl.textContent = S.eur(total); if (nEl) nEl.textContent = n + ' adeudos'; if (eEl) eEl.textContent = S.eur(ef);
   }
 
   /* ---------- Render y eventos ---------- */
@@ -369,12 +416,12 @@
     else if (a === 'compartirTodos') compartir(ultimosFicheros);
     else if (a === 'copiarUltima') {
       const u = ultimaRemesa(); if (!u) { toast('No hay remesas anteriores'); return; }
-      u.items.forEach(i => { borrador().importes[i.deudorId] = (i.importe / 100).toFixed(2).replace('.', ','); });
+      borrador(); cargarImportes(u);
       guardar(); render(); toast('Importes de ' + u.nombre + ' copiados');
     } else if (a === 'mismoImporte') {
-      const v = prompt('Importe bimensual para todos los deudores incluidos (€):'); if (v == null) return;
+      const v = prompt('Importe bimensual para todos los domiciliados incluidos (€):'); if (v == null) return;
       const c = S.parseImporte(v); if (!(c > 0)) { alert('Importe no válido'); return; }
-      st.deudores.filter(d => d.activo && !borrador().excluir[d.id]).forEach(d => { borrador().importes[d.id] = (c / 100).toFixed(2).replace('.', ','); });
+      st.deudores.filter(d => d.activo && !esEf(d) && !borrador().excluir[d.id]).forEach(d => { borrador().importes[d.id] = (c / 100).toFixed(2).replace('.', ','); });
       guardar(); render();
     } else if (a === 'editar') formDeudor(st.deudores.find(d => d.id === id));
     else if (a === 'nuevo') formDeudor(null);
@@ -387,7 +434,7 @@
     } else if (a === 'histDetalle') detalle(st.remesas.find(x => x.id === id));
     else if (a === 'histUsar') {
       const r = st.remesas.find(x => x.id === id);
-      r.items.forEach(i => { borrador().importes[i.deudorId] = (i.importe / 100).toFixed(2).replace('.', ','); });
+      borrador(); cargarImportes(r);
       guardar(); tab = 'remesa'; render(); toast('Importes cargados en la remesa');
     } else if (a === 'histBorrar') {
       const r = st.remesas.find(x => x.id === id);
@@ -413,7 +460,7 @@
           const d = JSON.parse(r.result);
           if (!d.config || !Array.isArray(d.deudores)) throw new Error('formato');
           if (!confirm('Se sustituirán los datos actuales por los de la copia. ¿Continuar?')) return;
-          st = d; st.config = Object.assign({}, defaults().config, st.config); guardar(); render(); toast('Copia importada');
+          st = d; st.config = Object.assign({}, defaults().config, st.config); migrar(); guardar(); render(); toast('Copia importada');
         } catch (err) { alert('El fichero no es una copia válida.'); }
       };
       r.readAsText(t.files[0]);
@@ -430,6 +477,12 @@
       } else b[k] = t.value;
       guardar(); render();
     } else if (t.dataset.fmt) { borrador().formatos[t.dataset.fmt] = t.checked; guardar(); }
+    else if (t.dataset.efc) {
+      const [rid, did] = t.dataset.efc.split('|'), r = st.remesas.find(x => x.id === rid);
+      const e = r.efectivo.find(x => x.deudorId === did);
+      e.cobrado = t.checked; e.fechaPago = t.checked ? S.hoyIso() : '';
+      const dl = $('#dlg'), y = dl.scrollTop; guardar(); detalle(r); dl.scrollTop = y; render();
+    } else if (t.form && t.form.id === 'fd' && t.name === 'pago') { $('#bancoCampos').hidden = t.value === 'efectivo'; }
     else if (t.dataset.incl) { borrador().excluir[t.dataset.incl] = !t.checked; guardar(); render(); }
     else if (t.dataset.imp) {
       const c = S.parseImporte(t.value);
