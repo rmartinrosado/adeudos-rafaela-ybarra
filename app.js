@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v3.5';
+  const VERSION = 'v3.6';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -429,25 +429,53 @@
     if (bar) bar.style.width = Math.round(p * 100) + '%';
     if (tx) tx.textContent = t + (p > 0.25 && p < 1 ? ' ' + Math.round(p * 100) + ' %' : '');
   }
+  let fotoActual = null;
   async function procesarFoto(file) {
-    if (lectura && lectura.foto) URL.revokeObjectURL(lectura.foto);
-    const foto = URL.createObjectURL(file);
+    if (fotoActual && fotoActual.url) URL.revokeObjectURL(fotoActual.url);
+    const url = URL.createObjectURL(file);
     const docId = await guardarDoc(nombreActual(), file, 'Foto ' + new Date().toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' }), 'foto');
-    abrir('<div class="card"><h2>' + ico('escanear') + 'Leyendo la foto</h2><img class="foto escaneando" src="' + foto + '" alt="">' +
+    fotoActual = { file, url, docId };
+    elegirLectura();
+  }
+  function elegirLectura() {
+    abrir('<div class="card"><h2>' + ico('escanear') + 'Leer la hoja<span class="h2r">' + esc(nombreActual()) + '</span></h2>' +
+      '<img class="foto" src="' + fotoActual.url + '" alt="Foto de la hoja">' +
+      '<div class="muted" style="margin-bottom:6px">Foto guardada en Documentos. Elige cómo leerla:</div>' +
+      '<button class="accion" style="width:100%;flex-direction:row;align-items:center;gap:12px;margin-bottom:10px" data-act="leerVivo">' + ico('escanear') +
+      '<div><b>Texto en vivo del iPhone</b><span>Recomendado para la hoja escrita a mano. Lee mucho mejor las cifras.</span></div></button>' +
+      '<button class="accion" style="width:100%;flex-direction:row;align-items:center;gap:12px" data-act="leerAuto">' + ico('camara') +
+      '<div><b>Lector automático</b><span>Para documentos impresos. Con letra a mano suele fallar.</span></div></button>' +
+      '<div class="btns"><button class="btn sec" data-act="cerrar">Cerrar</button></div></div>');
+  }
+  function dlgPegar() {
+    abrir('<div class="card"><h2>' + ico('escanear') + 'Texto en vivo</h2>' +
+      '<ol style="margin:0 0 10px;padding-left:20px;line-height:1.55;font-size:14.5px">' +
+      '<li>Mantén el dedo sobre el texto de la foto de abajo (o ábrela en la app Fotos).</li>' +
+      '<li>Toca <b>Seleccionar todo</b> y después <b>Copiar</b>.</li>' +
+      '<li>Vuelve aquí y pulsa <b>Pegar</b>, o mantén el dedo en el cuadro y elige Pegar.</li></ol>' +
+      '<img class="foto" src="' + fotoActual.url + '" alt="Foto de la hoja" style="max-height:none;object-fit:contain">' +
+      '<textarea id="txtPegado" rows="7" placeholder="Aquí aparecerá el texto de la hoja" style="width:100%;font:14px/1.4 ui-monospace,Menlo,monospace;color:var(--ink);background:var(--input);border:1px solid var(--line);border-radius:12px;padding:10px"></textarea>' +
+      '<div class="btns"><button class="btn sec" data-act="pegarClip">' + ico('fichero') + 'Pegar</button><button class="btn oro" data-act="analizarPegado">' + ico('check') + 'Analizar</button></div>' +
+      '<div class="btns" style="margin-top:8px"><button class="btn sec" data-act="elegirLectura">Volver</button></div></div>');
+  }
+  function analizarTexto(texto) {
+    const res = window.OCR.analizar(texto, st.deudores.filter(d => d.activo));
+    const valores = {};
+    res.filas.forEach(f => { valores[f.deudorId] = f.importe; });
+    lectura = { res, foto: fotoActual.url, valores, texto, docId: fotoActual.docId };
+    revisionFoto();
+  }
+  async function leerAuto() {
+    abrir('<div class="card"><h2>' + ico('escanear') + 'Leyendo la foto</h2><img class="foto escaneando" src="' + fotoActual.url + '" alt="">' +
       '<div class="prog"><i id="ocrBar"></i></div><div class="muted" id="ocrTxt">Preparando la foto</div>' +
       '<p class="muted">La lectura se hace en este iPhone. La primera vez descarga el lector de texto (unos 10 MB).</p></div>');
     try {
-      const texto = await window.OCR.leer(file, dlgProgreso);
-      const res = window.OCR.analizar(texto, st.deudores.filter(d => d.activo));
-      const valores = {};
-      res.filas.forEach(f => { valores[f.deudorId] = f.importe; });
-      lectura = { res, foto, valores, texto, docId };
-      revisionFoto();
+      analizarTexto(await window.OCR.leer(fotoActual.file, dlgProgreso));
     } catch (e) {
       const sinRed = /conexi|network|fetch|load/i.test(e.message || '');
       abrir('<div class="card"><h2>' + ico('aviso') + 'No se pudo leer la foto</h2><div class="alert err">' + ico('aviso') + '<span>' +
-        (sinRed ? 'Hace falta conexión a internet para descargar el lector de texto la primera vez. Conéctate y vuelve a intentarlo.' : 'Error al leer: ' + esc(e.message || e)) +
-        '</span></div><div class="btns"><button class="btn oro" data-act="foto">' + ico('camara') + 'Repetir</button><button class="btn sec" data-act="cerrar">Cerrar</button></div></div>');
+        (sinRed ? 'Hace falta conexión a internet para descargar el lector de texto la primera vez. Conéctate y vuelve a intentarlo, o usa Texto en vivo.' : 'Error al leer: ' + esc(e.message || e)) +
+        '</span></div><div class="btns"><button class="btn oro" data-act="leerVivo">' + ico('escanear') + 'Usar Texto en vivo</button><button class="btn sec" data-act="cerrar">Cerrar</button></div></div>');
     }
   }
   function sumaLectura() { return Object.values(lectura.valores).reduce((s, v) => s + (v > 0 ? v : 0), 0); }
@@ -473,6 +501,9 @@
   }
   function cuadreDoc() {
     const t = lectura.res.totalDoc, suma = sumaLectura();
+    const ef = st.deudores.filter(d => esEf(d)).reduce((a, d) => a + (lectura.valores[d.id] > 0 ? lectura.valores[d.id] : 0), 0);
+    if (t != null && t !== suma && ef && t === suma - ef)
+      return '<div class="alert ok">' + ico('check') + '<span>Los domiciliados suman <b>' + S.eur(t) + '</b>, igual que el total de la hoja. El efectivo (' + S.eur(ef) + ') va aparte.</span></div>';
     if (t == null) return '<div class="alert warn">' + ico('info') + '<span>No se ha encontrado una línea de total en el documento. Suma leída: <b>' + S.eur(suma) + '</b>.</span></div>';
     return t === suma
       ? '<div class="alert ok">' + ico('check') + '<span>La suma leída cuadra con el total del documento: <b>' + S.eur(t) + '</b>.</span></div>'
@@ -484,7 +515,9 @@
     const encontrados = ds.filter(d => porId[d.id] && porId[d.id].importe != null).length;
     const filas = ds.map(d => {
       const f = porId[d.id] || {}, v = L.valores[d.id];
-      const chip = f.importe == null ? '<span class="chip errc">No encontrado</span>' : f.repetido ? '<span class="chip frst">Repetido</span>' : f.por === 'nombre' ? '<span class="chip ef">Por nombre</span>' : '<span class="chip okc">Leído</span>';
+      const chip = f.importe == null ? '<span class="chip errc">No encontrado</span>' :
+        (f.verificado ? '<span class="chip okc">Cuadra la suma</span>' : f.corregido ? '<span class="chip frst">Corregido con la suma</span>' : f.alt != null ? '<span class="chip errc">Suma: ' + S.eur(f.alt) + '</span>' : '<span class="chip okc">Leído</span>') +
+        (f.por === 'orden' ? ' <span class="chip ef">Por orden</span>' : f.por === 'nombre' ? ' <span class="chip ef">Por nombre</span>' : '') + (f.repetido ? ' <span class="chip frst">Repetido</span>' : '');
       return '<div class="item"><div class="unit' + (d.tipo === 'local' ? ' local' : '') + '">' + esc(corto(d)) + '</div>' +
         '<div class="grow"><div class="name">' + esc(nomVis(d) || etiqueta(d)) + '</div><div>' + chip + (esEf(d) ? ' <span class="chip ef">Efectivo</span>' : '') + '</div>' +
         (f.linea ? '<div class="muted linea">' + esc(f.linea) + '</div>' : '') + '<div class="muted" id="ref_' + d.id + '">' + marcaRef(d.id) + '</div></div>' +
@@ -500,7 +533,8 @@
       '<div class="tot"><span class="muted">Suma leída</span><span class="big" id="ocrSuma">' + S.eur(sumaLectura()) + '</span></div>' +
       sueltas +
       '<details class="texto"><summary>Ver el texto leído</summary><pre>' + esc(L.texto) + '</pre></details>' +
-      '<div class="btns"><button class="btn oro" data-act="ocrAplicar">' + ico('check') + 'Aplicar a la remesa</button><button class="btn sec" data-act="foto">' + ico('camara') + 'Otra foto</button></div>' +
+      '<div class="btns"><button class="btn oro" data-act="ocrAplicar">' + ico('check') + 'Aplicar a la remesa</button></div>' +
+      '<div class="btns" style="margin-top:8px"><button class="btn sec" data-act="leerVivo">' + ico('escanear') + 'Texto en vivo</button><button class="btn sec" data-act="foto">' + ico('camara') + 'Otra foto</button></div>' +
       '<div class="btns" style="margin-top:8px"><button class="btn sec" data-act="cerrar">Cancelar</button></div></div>');
   }
   function aplicarLectura() {
@@ -641,13 +675,17 @@
     R.ordenes.forEach((o, i) => {
       const d = st.deudores.find(x => x.id === P.asig[i]);
       d.nombre = o.nombre; d.iban = S.normIban(o.iban); d.bic = S.bicDeIban(o.iban) || d.bic || '';
+      if (o.nif) d.nif = o.nif;
       d.pago = 'domiciliado'; d.previos = true; d.activo = true;
       items.push(itemDe(d, R.nombre, o.importe));
       if (!S.parseImporte(b.importes[d.id])) { b.importes[d.id] = centAStr(o.importe); b.excluir[d.id] = false; }
     });
     st.remesas = st.remesas.filter(x => x.nombre !== R.nombre);
     st.remesas.push({ id: uid(), generado: new Date().toISOString(), importado: true, formatos: { core: true, c1914: true, b2b: false, c1944: false },
-      nombre: R.nombre, fechaGen: R.fechaGen, fechaCobro: R.fechaCobro, efectivo: [],
+      nombre: R.nombre, fechaGen: R.fechaGen, fechaCobro: R.fechaCobro,
+      efectivo: (R.efectivo || []).map(e => { const d = st.deudores.find(x => x.unidad === e.unidad); if (!d) return null;
+        if (!b.importes[d.id]) b.importes[d.id] = centAStr(e.importe);
+        return { deudorId: d.id, unidad: d.unidad, nombre: nomVis(d) || etiqueta(d), etiqueta: etiqueta(d), importe: e.importe, cobrado: !!e.cobrado, fechaPago: e.cobrado ? R.fechaCobro : '' }; }).filter(Boolean),
       acreedor: { nombre: c.nombre, id: idAcr(), iban: S.normIban(c.iban), bic: (c.bic || '').toUpperCase(), d1: c.direccion, d2: c.cp + ' ' + c.localidad, d3: c.provincia, pais: 'ES' }, items });
     guardar();
     if (P.documento && P.documento.base64) {
@@ -667,7 +705,10 @@
         const P = JSON.parse(r.result);
         if (P.tipo !== 'remesa-banco' || !P.remesa || !Array.isArray(P.remesa.ordenes)) throw new Error('formato');
         paquete = P; P.asig = [];
-        P.remesa.ordenes.forEach((o, i) => { const id = sugerir(o); P.asig[i] = P.asig.includes(id) ? '' : id; });
+        P.remesa.ordenes.forEach((o, i) => {
+          const fijo = o.unidad && st.deudores.find(d => d.unidad === o.unidad);
+          const id = fijo ? fijo.id : sugerir(o); P.asig[i] = P.asig.includes(id) ? '' : id;
+        });
         dlgPaquete();
       } catch (e) { alert('Este fichero no es un listado del banco preparado para la app.'); }
     };
@@ -965,6 +1006,17 @@
     if (a === 'cerrar') cerrar();
     else if (a === 'foto') { const i = $('#fotoImp'); i.value = ''; i.click(); }
     else if (a === 'ocrAplicar') aplicarLectura();
+    else if (a === 'leerVivo') dlgPegar();
+    else if (a === 'leerAuto') leerAuto();
+    else if (a === 'elegirLectura') elegirLectura();
+    else if (a === 'pegarClip') {
+      if (navigator.clipboard && navigator.clipboard.readText) navigator.clipboard.readText().then(t => { $('#txtPegado').value = t; }).catch(() => toast('Mantén el dedo en el cuadro y elige Pegar'));
+      else toast('Mantén el dedo en el cuadro y elige Pegar');
+    } else if (a === 'analizarPegado') {
+      const t = $('#txtPegado').value.trim();
+      if (!t) { toast('Primero pega el texto de la hoja'); return; }
+      analizarTexto(t);
+    }
     else if (a === 'cargos') dlgCargos();
     else if (a === 'docs' || a === 'docVolver') dlgDocs(el.dataset.rem);
     else if (a === 'docAnadir') { docDestino = el.dataset.rem; const i = $('#docImp'); i.value = ''; i.click(); }

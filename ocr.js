@@ -104,8 +104,102 @@
     return mejor;
   }
 
+
+  /* ---------- Hoja de pagos de la comunidad ----------
+     Cada vecino ocupa una fila. En la columna TOTAL hay cuentas a mano («120+28,61» y «148,61+50=198,61»):
+     el importe a cobrar es la cifra que va después del último «=». La fila se reconoce por el nº de cuenta,
+     el DNI, el piso o el nombre; la cifra se comprueba con la suma de su izquierda. */
+  // Corrige letras que la escritura a mano suele confundir con cifras, solo en trozos numéricos
+  function numTok(l) {
+    return String(l).split(/(\s+)/).map(t => /\d/.test(t) && /^[0-9OoSsVvr√lI|,.+=€:_-]+$/.test(t)
+      ? t.replace(/[Oo]/g, '0').replace(/[SsVvr√]/g, '5').replace(/[lI|]/g, '1') : t).join('');
+  }
+  function valor(str) {
+    const m = String(str).match(/^\s*(\d{1,3}(?:\.\d{3})+|\d{1,5})(?:\s?[,.]\s?(\d{1,2}))?(?!\d)/);
+    if (!m) return null;
+    return parseInt(m[1].replace(/\./g, ''), 10) * 100 + (m[2] ? parseInt(m[2].padEnd(2, '0'), 10) : 0);
+  }
+  function sumaExpr(e) {
+    const ps = e.split('+').map(x => valor(x.replace(/^[^0-9]+/, '')));
+    return ps.length > 1 && ps.every(v => v != null) ? ps.reduce((a, b) => a + b, 0) : null;
+  }
+  function exprIgual(l) {
+    const L = numTok(l), i = L.lastIndexOf('=');
+    if (i < 0) return null;
+    const fin = valor(L.slice(i + 1).replace(/^[\s:_\-—–|]+/, ''));
+    const izq = L.slice(0, i).split('=').pop().match(/\d[\d.,\s]*(?:\+\s*\d[\d.,\s]*)+$/);
+    const suma = izq ? sumaExpr(izq[0].trim()) : null;
+    if (fin == null && suma == null) return null;
+    return { fin, suma, ok: fin != null && suma != null && fin === suma };
+  }
+  function anclaHoja(l, n, ds) {
+    const dig = l.replace(/[^0-9]/g, '');
+    let best = null;
+    ds.forEach(d => {
+      const cta = String(d.iban || '').replace(/[^0-9]/g, '').slice(-10);
+      if (cta.length === 10 && dig.includes(cta) && (!best || best.s < 3)) best = { u: d.unidad, s: 3, por: 'cuenta' };
+      const dni = String(d.nif || '').replace(/[^0-9]/g, '');
+      if (dni.length >= 7 && dig.includes(dni) && (!best || best.s < 3)) best = { u: d.unidad, s: 3, por: 'dni' };
+    });
+    if (best) return best;
+    const un = unidadDeLinea(n, ds);
+    if (!un) {
+      const r = ds.find(d => d.tipo === 'local' && [d.rotulo, d.nombre].filter(Boolean).some(x => norm(x).split(' ').some(t => t.length >= 6 && new RegExp('\\b' + t + '\\b').test(n))));
+      if (r) return { u: r.unidad, s: 1, por: 'nombre' };
+    }
+    return un ? { u: un.u, s: un.por === 'unidad' ? 2 : 1, por: un.por } : null;
+  }
+  function analizarHoja(texto, ds) {
+    const lineas = String(texto || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const info = lineas.map(l => {
+      const n = norm(l.replace(/\d+[.,]\d{2}/g, ' '));
+      return { l, a: anclaHoja(l, n, ds), e: exprIgual(l), total: /\bTOTAL\s*(:|€|EUR)/.test(norm(l)) };
+    });
+    const nAnclas = info.filter(x => x.a && x.a.s >= 2).length, nExpr = info.filter(x => x.e).length;
+    if (nAnclas < 3 || (nExpr < 3 && nAnclas < 6)) return null;
+    let iTotal = info.findIndex((x, i) => x.total && info.slice(0, i).filter(y => y.a).length >= 3);
+    if (iTotal < 0) iTotal = info.length;
+    const asig = {}, cola = [], orden = [];
+    const poner = (u, x, s, por, i) => {
+      const e = x.e, prev = asig[u];
+      if (prev && prev.s >= s) { prev.repetido = true; return; }
+      let imp = e.fin != null ? e.fin : e.suma, corregido = false;
+      if (!e.ok && e.suma != null) {
+        // «=1190,69» con una raya leída como 1, o cifra ilegible: manda la suma si la fila anterior la respalda («120+20,69»)
+        const ant = (info[i - 1] && numTok(info[i - 1].l).match(/(\d{2,3})\s*\+\s*(\d{1,3}[.,]\d{2})/)) || null;
+        const base = ant ? valor(ant[1]) + valor(ant[2]) : null;
+        const primero = valor(String(numTok(x.l)).split('=')[0].replace(/^.*?(\d[\d.,]*)\s*\+[^+]*$/, '$1'));
+        if (e.fin == null || String(e.fin).endsWith(String(e.suma)) || (base != null && base === primero)) { imp = e.suma; corregido = e.fin != null; }
+      }
+      asig[u] = { importe: imp, linea: x.l, por, s, verificado: e.ok, corregido, alt: !e.ok && e.suma != null && e.fin != null && !corregido ? e.suma : null };
+    };
+    let ultima = null;
+    info.forEach((x, i) => {
+      if (x.a) { ultima = { a: x.a, i }; if (i < iTotal && !orden.includes(x.a.u)) orden.push(x.a.u); }
+      if (!x.e || i === iTotal) return;
+      if (i > iTotal) { if (x.a && !asig[x.a.u]) poner(x.a.u, x, 1, x.a.por, i); return; }   // notas bajo el total
+      if (x.a) poner(x.a.u, x, x.a.s, x.a.por, i);
+      else if (ultima && i - ultima.i <= 1) poner(ultima.a.u, x, ultima.a.s, ultima.a.por, i);
+      else cola.push(Object.assign({ i }, x));
+    });
+    // Texto copiado por columnas: las cifras vienen todas seguidas; se asignan por el orden de las filas
+    const sin = orden.filter(u => !asig[u]);
+    if (cola.length && cola.length === sin.length) { sin.forEach((u, k) => poner(u, cola[k], 1, 'orden', cola[k].i)); cola.length = 0; }
+    // Total del documento: la mayor cuenta escrita junto a «TOTAL» o debajo (p. ej. «1543+550=2093,63»)
+    let totalDoc = null;
+    for (let i = iTotal; i < Math.min(info.length, iTotal + 9); i++) {
+      const e = info[i] && info[i].e; if (!e) continue;
+      const v = e.ok || e.fin == null ? (e.suma != null ? e.suma : e.fin) : e.fin;
+      if (v != null && (totalDoc == null || v > totalDoc)) totalDoc = v;
+    }
+    const filas = ds.map(d => Object.assign({ deudorId: d.id, unidad: d.unidad }, asig[d.unidad] || { importe: null }));
+    return { filas, sueltas: cola.map((x, idx) => ({ importe: x.e.fin != null ? x.e.fin : x.e.suma, linea: x.l, idx })), totalDoc, lineas, hoja: true };
+  }
+
   function analizar(texto, deudores) {
     const ds = deudores.filter(d => d.activo !== false);
+    const h = analizarHoja(texto, ds);
+    if (h) return h;
     const lineas = String(texto || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     const asig = {}, sueltas = []; let totalDoc = null;
     let pendiente = null; // unidad sin importe a la espera de la línea siguiente
@@ -132,5 +226,5 @@
     return { filas, sueltas, totalDoc, lineas };
   }
 
-  g.OCR = { leer, analizar, importes, norm, _unidad: unidadDeLinea };
+  g.OCR = { leer, analizar, analizarHoja, importes, norm, _unidad: unidadDeLinea };
 })(typeof window !== 'undefined' ? window : globalThis);
