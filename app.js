@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v2.7';
+  const VERSION = 'v2.8';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -847,7 +847,7 @@
   });
 
   /* ---------- Actualizar la app (código), sin tocar los datos ---------- */
-  const FICHEROS_APP = ['./', 'index.html', 'app.js', 'sepa.js', 'ocr.js', 'sw.js', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
+  const FICHEROS_APP = ['./', 'index.html', 'app.js?v=' + VERSION.slice(1), 'sepa.js?v=' + VERSION.slice(1), 'ocr.js?v=' + VERSION.slice(1), 'app.js', 'sepa.js', 'ocr.js', 'sw.js', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
   async function actualizarApp() {
     const btn = $('#upd');
     if (!navigator.onLine) { alert('Sin conexión a internet. Conéctate y vuelve a pulsar Actualizar.'); return; }
@@ -870,6 +870,17 @@
     }
   }
   $('#upd').addEventListener('click', actualizarApp);
+  // Aviso automático si GitHub ya tiene una versión más nueva
+  async function comprobarNueva() {
+    if (!navigator.onLine) return;
+    try {
+      const txt = await (await fetch('app.js?nc=' + Date.now(), { cache: 'no-store' })).text();
+      const m = txt.match(/const VERSION = '([^']+)'/);
+      if (m && m[1] !== VERSION) { $('#upd').classList.add('nueva'); toast('Hay una versión nueva (' + m[1] + '): toca ↻'); }
+    } catch (e) {}
+  }
+  setTimeout(comprobarNueva, 1500);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) comprobarNueva(); });
   try {
     const desde = sessionStorage.getItem('actualizadoDesde');
     if (desde) { sessionStorage.removeItem('actualizadoDesde'); history.replaceState(null, '', location.pathname); setTimeout(() => toast(desde === VERSION ? 'App recargada · ' + VERSION : 'Actualizada de ' + desde + ' a ' + VERSION), 300); }

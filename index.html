@@ -59,6 +59,7 @@ header p{margin:3px 0 0;font-size:12.5px;color:rgba(255,255,255,.66);white-space
 .upd{border:0;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.09);color:#fff;display:flex;align-items:center;justify-content:center;padding:0}
 .upd svg{width:18px;height:18px}
 .upd.girando svg{animation:gira .8s linear infinite}
+.upd{position:relative}.upd.nueva{background:var(--gold);color:#13223a}.upd.nueva::after{content:"";position:absolute;top:1px;right:1px;width:9px;height:9px;border-radius:50%;background:#e3929a;border:2px solid var(--navy)}
 @keyframes gira{to{transform:rotate(360deg)}}
 
 main{padding:16px 16px calc(env(safe-area-inset-bottom) + 96px);max-width:640px;margin:0 auto}
@@ -234,8 +235,8 @@ dialog .card{border:0;margin:0;box-shadow:none;border-radius:0}
 <dialog id="dlg"></dialog>
 <div class="toast" id="toast" role="status"></div>
 <input type="file" id="fotoImp" accept="image/*" hidden>
-<script src="sepa.js"></script>
-<script src="ocr.js"></script>
-<script src="app.js"></script>
+<script src="sepa.js?v=2.8"></script>
+<script src="ocr.js?v=2.8"></script>
+<script src="app.js?v=2.8"></script>
 </body>
 </html>
