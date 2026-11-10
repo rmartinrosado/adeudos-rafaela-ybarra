@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v2.1';
+  const VERSION = 'v2.2';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -28,7 +28,9 @@
     grafico: '<path d="M3 20.5h18"/><path d="M6 17V11M10.5 17V6M15 17v-4M19.5 17V8.5"/>',
     sello: '<path d="m12 2.8 2.3 1.9 3-.3.8 2.9 2.5 1.7-1.2 2.8 1.2 2.8-2.5 1.7-.8 2.9-3-.3L12 21.2l-2.3-1.9-3 .3-.8-2.9-2.5-1.7 1.2-2.8-1.2-2.8 2.5-1.7.8-2.9 3 .3z"/><path d="m8.8 12 2.2 2.2 4.2-4.4"/>',
     escudo: '<path d="M12 3 4.5 6v5.5c0 4.6 3.2 8 7.5 9.5 4.3-1.5 7.5-4.9 7.5-9.5V6z"/><path d="m9 12 2.2 2.2L15.2 10"/>',
-    flecha: '<path d="m9 5 7 7-7 7"/>'
+    flecha: '<path d="m9 5 7 7-7 7"/>',
+    camara: '<path d="M4 8h3l1.8-2.5h6.4L17 8h3a1 1 0 0 1 1 1v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.3" r="3.6"/>',
+    escanear: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M7.5 9h9M7.5 12h9M7.5 15h5"/>'
   };
   function ico(n, cls) {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' +
@@ -311,6 +313,7 @@
       '</section>' +
 
       '<div class="acciones">' +
+      '<button class="accion ancha" data-act="foto">' + ico('camara') + '<div><b>Leer importes de una foto</b><span>Haz una foto al documento de totales y la app rellena la remesa</span></div></button>' +
       '<button class="accion" data-act="ir" data-tab="remesa">' + ico('remesa') + '<b>' + (E.rem ? 'Revisar la remesa' : 'Preparar la remesa') + '</b><span>' + (E.rem ? 'Generada el ' + fmtFecha(E.rem.fechaGen) : 'Importes y ficheros') + '</span></button>' +
       '<button class="accion" data-act="efectivoActual">' + ico('efectivo') + '<b>Cobros en efectivo</b><span>' + (E.rem ? (efPend ? S.eur(efPend) + ' pendientes' : 'Todo cobrado') : 'Tras generar la remesa') + '</span></button>' +
       '<button class="accion" data-act="ir" data-tab="deudores">' + ico('vecinos') + '<b>Vecinos y locales</b><span>' + nOk + ' de ' + E.ds.length + ' con datos completos</span></button>' +
@@ -327,6 +330,74 @@
       '</div>' +
 
       '<div class="card"><h2>' + ico('grafico') + 'Recaudación por bimestre</h2>' + graficoHistorial() + '</div>';
+  }
+
+
+  /* ---------- Lector de fotos ---------- */
+  let lectura = null;
+  function dlgProgreso(p, t) {
+    const bar = $('#ocrBar'), tx = $('#ocrTxt');
+    if (bar) bar.style.width = Math.round(p * 100) + '%';
+    if (tx) tx.textContent = t + (p > 0.25 && p < 1 ? ' ' + Math.round(p * 100) + ' %' : '');
+  }
+  async function procesarFoto(file) {
+    if (lectura && lectura.foto) URL.revokeObjectURL(lectura.foto);
+    const foto = URL.createObjectURL(file);
+    abrir('<div class="card"><h2>' + ico('escanear') + 'Leyendo la foto</h2><img class="foto escaneando" src="' + foto + '" alt="">' +
+      '<div class="prog"><i id="ocrBar"></i></div><div class="muted" id="ocrTxt">Preparando la foto</div>' +
+      '<p class="muted">La lectura se hace en este iPhone. La primera vez descarga el lector de texto (unos 10 MB).</p></div>');
+    try {
+      const texto = await window.OCR.leer(file, dlgProgreso);
+      const res = window.OCR.analizar(texto, st.deudores.filter(d => d.activo));
+      const valores = {};
+      res.filas.forEach(f => { valores[f.deudorId] = f.importe; });
+      lectura = { res, foto, valores, texto };
+      revisionFoto();
+    } catch (e) {
+      const sinRed = /conexi|network|fetch|load/i.test(e.message || '');
+      abrir('<div class="card"><h2>' + ico('aviso') + 'No se pudo leer la foto</h2><div class="alert err">' + ico('aviso') + '<span>' +
+        (sinRed ? 'Hace falta conexión a internet para descargar el lector de texto la primera vez. Conéctate y vuelve a intentarlo.' : 'Error al leer: ' + esc(e.message || e)) +
+        '</span></div><div class="btns"><button class="btn oro" data-act="foto">' + ico('camara') + 'Repetir</button><button class="btn sec" data-act="cerrar">Cerrar</button></div></div>');
+    }
+  }
+  function sumaLectura() { return Object.values(lectura.valores).reduce((s, v) => s + (v > 0 ? v : 0), 0); }
+  function cuadre() {
+    const t = lectura.res.totalDoc, suma = sumaLectura();
+    if (t == null) return '<div class="alert warn">' + ico('info') + '<span>No se ha encontrado una línea de total en el documento. Suma leída: <b>' + S.eur(suma) + '</b>.</span></div>';
+    return t === suma
+      ? '<div class="alert ok">' + ico('check') + '<span>La suma leída cuadra con el total del documento: <b>' + S.eur(t) + '</b>.</span></div>'
+      : '<div class="alert warn">' + ico('aviso') + '<span>La suma leída (<b>' + S.eur(suma) + '</b>) no coincide con el total del documento (<b>' + S.eur(t) + '</b>). Diferencia: ' + S.eur(Math.abs(t - suma)) + '. Revisa los importes.</span></div>';
+  }
+  function revisionFoto() {
+    const L = lectura, ds = ordenados().filter(d => d.activo);
+    const porId = {}; L.res.filas.forEach(f => { porId[f.deudorId] = f; });
+    const encontrados = ds.filter(d => porId[d.id] && porId[d.id].importe != null).length;
+    const filas = ds.map(d => {
+      const f = porId[d.id] || {}, v = L.valores[d.id];
+      const chip = f.importe == null ? '<span class="chip errc">No encontrado</span>' : f.repetido ? '<span class="chip frst">Repetido</span>' : f.por === 'nombre' ? '<span class="chip ef">Por nombre</span>' : '<span class="chip okc">Leído</span>';
+      return '<div class="item"><div class="unit' + (d.tipo === 'local' ? ' local' : '') + '">' + esc(corto(d)) + '</div>' +
+        '<div class="grow"><div class="name">' + esc(d.nombre || etiqueta(d)) + '</div><div>' + chip + (esEf(d) ? ' <span class="chip ef">Efectivo</span>' : '') + '</div>' +
+        (f.linea ? '<div class="muted linea">' + esc(f.linea) + '</div>' : '') + '</div>' +
+        '<input class="amount" inputmode="decimal" placeholder="0,00 €" data-ocr="' + d.id + '" value="' + (v > 0 ? centAStr(v) : '') + '"></div>';
+    }).join('');
+    const opts = '<option value="">Asignar a…</option>' + ds.map(d => '<option value="' + d.id + '">' + esc(etiqueta(d) + (d.nombre ? ', ' + d.nombre : '')) + '</option>').join('');
+    const sueltas = L.res.sueltas.length ? '<h2 style="margin-top:18px">' + ico('info') + 'Importes sin asignar</h2>' +
+      L.res.sueltas.map((x, i) => '<div class="item"><div class="grow"><b>' + S.eur(x.importe) + '</b><div class="muted linea">' + esc(x.linea) + '</div></div>' +
+        '<select data-asig="' + i + '" style="width:150px;flex:none">' + opts + '</select></div>').join('') : '';
+    abrir('<div class="card"><h2>' + ico('escanear') + 'Importes leídos<span class="h2r">' + encontrados + ' de ' + ds.length + '</span></h2>' +
+      '<img class="foto" src="' + L.foto + '" alt="Foto del documento">' +
+      '<div id="ocrCuadre">' + cuadre() + '</div>' + filas +
+      '<div class="tot"><span class="muted">Suma leída</span><span class="big" id="ocrSuma">' + S.eur(sumaLectura()) + '</span></div>' +
+      sueltas +
+      '<details class="texto"><summary>Ver el texto leído</summary><pre>' + esc(L.texto) + '</pre></details>' +
+      '<div class="btns"><button class="btn oro" data-act="ocrAplicar">' + ico('check') + 'Aplicar a la remesa</button><button class="btn sec" data-act="foto">' + ico('camara') + 'Otra foto</button></div>' +
+      '<div class="btns" style="margin-top:8px"><button class="btn sec" data-act="cerrar">Cancelar</button></div></div>');
+  }
+  function aplicarLectura() {
+    const b = borrador(); let n = 0;
+    Object.entries(lectura.valores).forEach(([id, v]) => { if (v > 0) { b.importes[id] = centAStr(v); b.excluir[id] = false; n++; } });
+    guardar(); cerrar(); tab = 'remesa'; render(); window.scrollTo(0, 0);
+    toast('Importes aplicados a ' + n + (n === 1 ? ' vecino' : ' vecinos'));
   }
 
   /* ---------- Pestaña Remesa ---------- */
@@ -366,6 +437,9 @@
       '<div><label>Año</label><input type="number" inputmode="numeric" data-b="anio" value="' + b.anio + '"></div></div>' +
       '<label>Fecha de cobro (siempre día 10)</label><select data-b="mesCobro">' + meses + '</select></div>' +
 
+      '<div class="card foto-card"><div class="grow"><h2 style="margin-bottom:4px">' + ico('escanear') + 'Leer importes de una foto</h2>' +
+      '<div class="muted">Fotografía el documento con los totales de cada vecino y revisa lo leído antes de aplicarlo.</div></div>' +
+      '<button class="btn oro sm" data-act="foto">' + ico('camara') + 'Foto</button></div>' +
       '<div class="card"><h2>' + ico('panel') + 'Domiciliados en banco</h2>' + (filas || '<div class="empty">No hay deudores domiciliados activos.</div>') +
       '<div class="tot"><span class="muted" id="nRem">' + n + ' adeudos</span><span class="big" style="font-size:22px" id="totRem">' + S.eur(total) + '</span></div>' +
       '<div class="btns"><button class="btn sec sm" data-act="copiarUltima">Copiar importes de la última remesa</button>' +
@@ -577,6 +651,8 @@
     const el = e.target.closest('[data-act]'); if (!el) return;
     const a = el.dataset.act, id = el.dataset.id;
     if (a === 'cerrar') cerrar();
+    else if (a === 'foto') { const i = $('#fotoImp'); i.value = ''; i.click(); }
+    else if (a === 'ocrAplicar') aplicarLectura();
     else if (a === 'ir') { cerrar(); tab = el.dataset.tab; render(); window.scrollTo(0, 0); }
     else if (a === 'efectivoActual') {
       const r = st.remesas.find(x => x.nombre === nombreActual());
@@ -625,6 +701,16 @@
 
   document.addEventListener('change', e => {
     const t = e.target;
+    if (t.id === 'fotoImp' && t.files[0]) { procesarFoto(t.files[0]); return; }
+    if (t.dataset.asig !== undefined && t.value) {
+      const x = lectura.res.sueltas[+t.dataset.asig]; lectura.valores[t.value] = x.importe;
+      const inp = document.querySelector('[data-ocr="' + t.value + '"]'); if (inp) inp.value = centAStr(x.importe);
+      $('#ocrSuma').textContent = S.eur(sumaLectura()); $('#ocrCuadre').innerHTML = cuadre(); return;
+    }
+    if (t.dataset.ocr) {
+      const c = S.parseImporte(t.value); lectura.valores[t.dataset.ocr] = c > 0 ? c : null; t.value = c > 0 ? centAStr(c) : '';
+      $('#ocrSuma').textContent = S.eur(sumaLectura()); $('#ocrCuadre').innerHTML = cuadre(); return;
+    }
     if (t.id === 'fileImp' && t.files[0]) {
       const r = new FileReader();
       r.onload = () => {
@@ -681,7 +767,7 @@
   });
 
   /* ---------- Actualizar la app (código), sin tocar los datos ---------- */
-  const FICHEROS_APP = ['./', 'index.html', 'app.js', 'sepa.js', 'sw.js', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
+  const FICHEROS_APP = ['./', 'index.html', 'app.js', 'sepa.js', 'ocr.js', 'sw.js', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
   async function actualizarApp() {
     const btn = $('#upd');
     if (!navigator.onLine) { alert('Sin conexión a internet. Conéctate y vuelve a pulsar Actualizar.'); return; }
