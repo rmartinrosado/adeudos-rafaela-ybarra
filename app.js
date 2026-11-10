@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v4.2';
+  const VERSION = 'v4.3';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -429,7 +429,7 @@
   function vistaPanel() {
     const E = estadoBimestre(), b = E.b, fc = fechaCobro(), m1 = S.MESES[b.idx * 2], m2 = S.MESES[b.idx * 2 + 1];
     const hoy = S.aDate(S.hoyIso()), dias = Math.round((S.aDate(fc) - hoy) / 86400000);
-    const fcD = S.aDate(fc), cuando = 'Cobro el ' + diaSemana(fc) + ' 10 de ' + S.MESES[fcD.getMonth()].toLowerCase() + ' de ' + fcD.getFullYear();
+    const fcD = S.aDate(fc), cuando = 'Cobro el ' + diaSemana(fc).charAt(0).toUpperCase() + diaSemana(fc).slice(1) + ' 10 de ' + S.MESES[fcD.getMonth()] + ' de ' + fcD.getFullYear();
     const cuenta = dias > 0 ? '<b>' + dias + '</b><span>' + (dias === 1 ? 'día' : 'días') + '<br>al cobro</span>' : dias === 0 ? '<b>Hoy</b><span>día de cobro</span>' : '<b>' + (-dias) + '</b><span>días desde el cobro</span>';
     const total = E.banco + E.ef, efPend = E.ef - E.efCob;
     const pct = v => total ? (v / total * 100).toFixed(2) + '%' : '0';
