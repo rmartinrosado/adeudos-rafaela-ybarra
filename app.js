@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v3.8';
+  const VERSION = 'v3.9';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -502,6 +502,9 @@
   function cuadreDoc() {
     const t = lectura.res.totalDoc, suma = sumaLectura();
     const ef = st.deudores.filter(d => esEf(d)).reduce((a, d) => a + (lectura.valores[d.id] > 0 ? lectura.valores[d.id] : 0), 0);
+    const notas = lectura.res.filas.filter(f => f.nota).reduce((a, f) => a + (lectura.valores[f.deudorId] > 0 ? lectura.valores[f.deudorId] : 0), 0);
+    if (t != null && t !== suma && notas && t === suma - notas)
+      return '<div class="alert ok">' + ico('check') + '<span>Las filas de la tabla suman <b>' + S.eur(t) + '</b>, igual que el total de la hoja. Las notas de debajo (' + S.eur(notas) + ') van aparte.</span></div>';
     if (t != null && t !== suma && ef && t === suma - ef)
       return '<div class="alert ok">' + ico('check') + '<span>Los domiciliados suman <b>' + S.eur(t) + '</b>, igual que el total de la hoja. El efectivo (' + S.eur(ef) + ') va aparte.</span></div>';
     if (t == null) return '<div class="alert warn">' + ico('info') + '<span>No se ha encontrado una línea de total en el documento. Suma leída: <b>' + S.eur(suma) + '</b>.</span></div>';
@@ -529,11 +532,13 @@
       L.res.sueltas.map((x, i) => '<div class="item"><div class="grow"><b>' + S.eur(x.importe) + '</b><div class="muted linea">' + esc(x.linea) + '</div></div>' +
         '<select data-asig="' + i + '" style="width:150px;flex:none">' + opts + '</select></div>').join('') : '';
     abrir('<div class="card"><h2>' + ico('escanear') + 'Importes leídos<span class="h2r">' + encontrados + ' de ' + ds.length + '</span></h2>' +
+      '<div class="muted" style="margin:-6px 0 8px">Lector ' + esc(window.OCR.version || '') + (L.res.hoja ? ', formato hoja de pagos' : ', formato general') + '</div>' +
       '<img class="foto" src="' + L.foto + '" alt="Foto del documento">' +
       '<div id="ocrCuadre">' + cuadre() + '</div>' + filas +
       '<div class="tot"><span class="muted">Suma leída</span><span class="big" id="ocrSuma">' + S.eur(sumaLectura()) + '</span></div>' +
       sueltas +
       '<details class="texto"><summary>Ver el texto leído</summary><pre>' + esc(L.texto) + '</pre></details>' +
+      '<div class="btns" style="margin-top:8px"><button class="btn sec sm" style="width:100%" data-act="copiarDiag">' + ico('fichero') + 'Copiar diagnóstico para enviárselo a Claude</button></div>' +
       '<div class="btns"><button class="btn oro" data-act="ocrAplicar">' + ico('check') + 'Aplicar a la remesa</button></div>' +
       '<div class="btns" style="margin-top:8px"><button class="btn sec" data-act="leerVivo">' + ico('escanear') + 'Texto en vivo</button><button class="btn sec" data-act="foto">' + ico('camara') + 'Otra foto</button></div>' +
       '<div class="btns" style="margin-top:8px"><button class="btn sec" data-act="cerrar">Cancelar</button></div></div>');
@@ -1008,6 +1013,16 @@
     else if (a === 'foto') { const i = $('#fotoImp'); i.value = ''; i.click(); }
     else if (a === 'ocrAplicar') aplicarLectura();
     else if (a === 'leerVivo') dlgPegar();
+    else if (a === 'copiarDiag') {
+      const ds = st.deudores.filter(d => d.activo), L = lectura;
+      const txt = ['App ' + VERSION + ', lector ' + (window.OCR.version || '?') + ', modo ' + (L.res.hoja ? 'hoja' : 'general'),
+        'Vecinos activos ' + ds.length + ': ' + ds.map(d => d.unidad + (d.iban ? ' cta' : '') + (d.nif ? ' dni' : '') + (d.nombre ? ' nom' : '') + (d.rotulo ? ' rot' : '') + ' ' + (d.pago === 'efectivo' ? 'ef' : 'dom')).join(', '),
+        'Leídos: ' + L.res.filas.map(f => f.unidad + '=' + (f.importe == null ? '-' : (f.importe / 100).toFixed(2)) + (f.por ? '(' + f.por + ')' : '')).join(' '),
+        'Total hoja: ' + (L.res.totalDoc == null ? '-' : (L.res.totalDoc / 100).toFixed(2)), '', 'Líneas:'].concat(L.res.diag || L.res.lineas).join('\n');
+      const hecho = () => toast('Diagnóstico copiado: pégalo en el chat con Claude');
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(hecho).catch(() => { $('#dlg').querySelector('pre').textContent = txt; toast('Copia el texto del cuadro «Ver el texto leído»'); });
+      else { $('#dlg').querySelector('pre').textContent = txt; toast('Copia el texto del cuadro «Ver el texto leído»'); }
+    }
     else if (a === 'leerAuto') leerAuto();
     else if (a === 'elegirLectura') elegirLectura();
     else if (a === 'pegarClip') {

@@ -160,7 +160,7 @@
   }
   function analizarHoja(texto, ds) {
     // Une cuentas partidas («148,61+50 =» … «198,61»; «147,62+50-» … «= 197,62»), aunque haya una línea en medio
-    const crudo = String(texto || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean), lineas = [];
+    const crudo = String(texto || '').split(/[\r\n\u2028\u2029\u0085\v\f]+/).map(s => s.trim()).filter(Boolean), lineas = [];
     for (let k = 0; k < crudo.length; k++) {
       const l = crudo[k], L = numTok(l);
       if (/=\s*$/.test(L) && /\d\s*\+\s*\d/.test(L)) {
@@ -237,7 +237,7 @@
         if (seguidas && nombres.length >= 2) {
           // los nombres sin ancla («#RUTERIA» ilegible) ocupan su hueco
           const huecos = info.slice(nombres[0].ini, b.exprs[0].i).filter(y => !y.e && y.l.length < 25);
-          huecos.forEach((y, q) => { if (b.exprs[q] && y.a) poner(y.a.u, b.exprs[q], 1, y.a.por, 1, null); });
+          huecos.forEach((y, q) => { if (b.exprs[q] && y.a) { poner(y.a.u, b.exprs[q], 1, y.a.por, 1, null); if (asig[y.a.u] && asig[y.a.u].linea === b.exprs[q].l) asig[y.a.u].nota = true; } });
           b.exprs.slice(huecos.length).forEach(x => cola.push(x));
           return;
         }
@@ -252,22 +252,23 @@
     const usadas = [];
     if (sin.length >= 3 && sin.length >= ordenTabla.length / 2 && cola.length >= sin.length) sin.forEach((u, k) => { poner(u, cola[k], 1, 'orden', 2, null); usadas.push(cola[k]); });
     // 3) Si solo falta un domiciliado, sale de restar al total de la hoja los que sí se han leído
-    const dom = ds.filter(d => d.pago !== 'efectivo' && orden.includes(d.unidad));
-    const falta = dom.filter(d => !asig[d.unidad] || asig[d.unidad].importe == null);
+    // (las filas de la tabla son las que van al banco; las notas de debajo, como DEPORTES, no)
+    const falta = orden.filter(u => !asig[u] || asig[u].importe == null);
     if (totalDoc != null && falta.length === 1) {
-      const resto = totalDoc - dom.filter(d => d !== falta[0]).reduce((a, d) => a + asig[d.unidad].importe, 0);
-      if (resto > 0 && resto < totalDoc / 2) asig[falta[0].unidad] = { importe: resto, linea: 'Total de la hoja menos el resto de domiciliados', por: 'total', prio: 1, calculado: true };
+      const resto = totalDoc - Object.values(asig).filter(x => !x.nota && x.importe != null).reduce((a, x) => a + x.importe, 0);
+      if (resto > 0 && resto < totalDoc / 2) asig[falta[0]] = { importe: resto, linea: 'Total de la hoja menos el resto de filas', por: 'total', prio: 1, calculado: true };
     }
     const filas = ds.map(d => Object.assign({ deudorId: d.id, unidad: d.unidad }, asig[d.unidad] || { importe: null }));
     const sueltas = cola.filter(x => !usadas.includes(x)).map((x, idx) => ({ importe: val(x.e), linea: x.l, idx }));
-    return { filas, sueltas, totalDoc, lineas, hoja: true };
+    const diag = info.map((x, i) => (i + 1) + ' | ' + x.l + (x.a ? '  [' + x.a.u + ' ' + x.a.por + ']' : '') + (x.e ? '  {fin ' + x.e.fin + ' suma ' + x.e.suma + '}' : ''));
+    return { filas, sueltas, totalDoc, lineas, hoja: true, diag };
   }
 
   function analizar(texto, deudores) {
     const ds = deudores.filter(d => d.activo !== false);
     const h = analizarHoja(texto, ds);
     if (h) return h;
-    const lineas = String(texto || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const lineas = String(texto || '').split(/[\r\n\u2028\u2029\u0085\v\f]+/).map(s => s.trim()).filter(Boolean);
     const asig = {}, sueltas = []; let totalDoc = null;
     let pendiente = null; // unidad sin importe a la espera de la línea siguiente
     lineas.forEach((l, idx) => {
@@ -293,5 +294,5 @@
     return { filas, sueltas, totalDoc, lineas };
   }
 
-  g.OCR = { leer, analizar, analizarHoja, importes, norm, _unidad: unidadDeLinea };
+  g.OCR = { version: '3.9', leer, analizar, analizarHoja, importes, norm, _unidad: unidadDeLinea };
 })(typeof window !== 'undefined' ? window : globalThis);
