@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v3.4';
+  const VERSION = 'v3.5';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -451,7 +451,27 @@
     }
   }
   function sumaLectura() { return Object.values(lectura.valores).reduce((s, v) => s + (v > 0 ? v : 0), 0); }
+  // Importes del listado del banco (remesa del Historial con el mismo nombre), para contrastar la lectura
+  function refBanco() {
+    const r = st.remesas.find(x => x.nombre === nombreActual()); if (!r) return null;
+    const m = {}; r.items.concat(r.efectivo || []).forEach(i => { if (i.importe > 0) m[i.deudorId] = i.importe; });
+    return { nombre: r.nombre, m, importado: !!r.importado };
+  }
+  function marcaRef(id) {
+    const ref = refBanco(); if (!ref || ref.m[id] == null) return '';
+    const v = lectura.valores[id], ok = v === ref.m[id];
+    return '<span style="color:' + (ok ? 'var(--ok)' : 'var(--err)') + '">' + (ok ? '✓ ' : '≠ ') + (ref.importado ? 'Banco ' : 'Remesa ') + S.eur(ref.m[id]) + '</span>';
+  }
+  function cuadreRef() {
+    const ref = refBanco(); if (!ref) return '';
+    const ids = Object.keys(ref.m), ok = ids.filter(id => lectura.valores[id] === ref.m[id]).length;
+    return '<div class="alert ' + (ok === ids.length ? 'ok' : 'warn') + '">' + ico(ok === ids.length ? 'check' : 'info') + '<span>Comparado con ' +
+      (ref.importado ? 'el listado del banco' : 'la remesa generada') + ' de ' + esc(ref.nombre) + ': <b>' + ok + ' de ' + ids.length + '</b> importes coinciden.</span></div>';
+  }
   function cuadre() {
+    return cuadreDoc() + cuadreRef();
+  }
+  function cuadreDoc() {
     const t = lectura.res.totalDoc, suma = sumaLectura();
     if (t == null) return '<div class="alert warn">' + ico('info') + '<span>No se ha encontrado una línea de total en el documento. Suma leída: <b>' + S.eur(suma) + '</b>.</span></div>';
     return t === suma
@@ -467,7 +487,7 @@
       const chip = f.importe == null ? '<span class="chip errc">No encontrado</span>' : f.repetido ? '<span class="chip frst">Repetido</span>' : f.por === 'nombre' ? '<span class="chip ef">Por nombre</span>' : '<span class="chip okc">Leído</span>';
       return '<div class="item"><div class="unit' + (d.tipo === 'local' ? ' local' : '') + '">' + esc(corto(d)) + '</div>' +
         '<div class="grow"><div class="name">' + esc(nomVis(d) || etiqueta(d)) + '</div><div>' + chip + (esEf(d) ? ' <span class="chip ef">Efectivo</span>' : '') + '</div>' +
-        (f.linea ? '<div class="muted linea">' + esc(f.linea) + '</div>' : '') + '</div>' +
+        (f.linea ? '<div class="muted linea">' + esc(f.linea) + '</div>' : '') + '<div class="muted" id="ref_' + d.id + '">' + marcaRef(d.id) + '</div></div>' +
         '<input class="amount" inputmode="decimal" placeholder="0,00 €" data-ocr="' + d.id + '" value="' + (v > 0 ? centAStr(v) : '') + '"></div>';
     }).join('');
     const opts = '<option value="">Asignar a…</option>' + ds.map(d => '<option value="' + d.id + '">' + esc(etiqueta(d) + (d.nombre ? ', ' + d.nombre : '')) + '</option>').join('');
@@ -957,11 +977,14 @@
     else if (a === 'borrarBorrador') {
       const n = Object.values(borrador().importes).filter(v => S.parseImporte(v) > 0).length;
       abrir('<div class="card"><h2>' + ico('aviso') + 'Borrar datos de la remesa<span class="h2r">' + esc(nombreActual()) + '</span></h2>' +
-        '<p class="muted" style="margin-top:0">Se borran para volver a introducirlos:</p><ul style="margin:0 0 6px;padding-left:20px;line-height:1.7">' +
-        '<li>La fecha de generación (vuelve a hoy)</li><li>Los importes de ' + n + (n === 1 ? ' vecino' : ' vecinos') + ', domiciliados y en efectivo</li>' +
+        '<p class="muted" style="margin-top:0"><b>Borrar solo los importes</b> deja a cero lo que paga cada vecino y mantiene lo demás. <b>Borrar todo</b> quita además:</p><ul style="margin:0 0 6px;padding-left:20px;line-height:1.7">' +
+        '<li>Los importes de ' + n + (n === 1 ? ' vecino' : ' vecinos') + ', domiciliados y en efectivo</li><li>La fecha de generación (vuelve a hoy)</li>' +
         '<li>Los vecinos excluidos de la remesa</li><li>La lectura de la foto del documento</li></ul>' +
         '<p class="muted">Se mantienen el bimestre, la fecha de cobro, los vecinos, el Historial y las fotos guardadas en Documentos.</p>' +
-        '<div class="btns"><button class="btn danger" data-act="borrarBorradorSi">Borrar datos</button><button class="btn sec" data-act="cerrar">Cancelar</button></div></div>');
+        '<div class="btns"><button class="btn danger" data-act="borrarImportes">Borrar solo los importes</button></div>' +
+        '<div class="btns" style="margin-top:8px"><button class="btn danger" data-act="borrarBorradorSi">Borrar todo</button><button class="btn sec" data-act="cerrar">Cancelar</button></div></div>');
+    } else if (a === 'borrarImportes') {
+      borrador().importes = {}; guardar(); cerrar(); render(); toast('Importes de ' + nombreActual() + ' borrados');
     } else if (a === 'borrarBorradorSi') {
       const b = borrador();
       b.fechaGen = S.hoyIso(); b.importes = {}; b.excluir = {}; delete b.lectura;
@@ -1033,11 +1056,13 @@
     if (t.dataset.asig !== undefined && t.value) {
       const x = lectura.res.sueltas[+t.dataset.asig]; lectura.valores[t.value] = x.importe;
       const inp = document.querySelector('[data-ocr="' + t.value + '"]'); if (inp) inp.value = centAStr(x.importe);
+      const rm = $('#ref_' + t.value); if (rm) rm.innerHTML = marcaRef(t.value);
       $('#ocrSuma').textContent = S.eur(sumaLectura()); $('#ocrCuadre').innerHTML = cuadre(); return;
     }
     if (t.dataset.ocr) {
       const c = S.parseImporte(t.value); lectura.valores[t.dataset.ocr] = c > 0 ? c : null; t.value = c > 0 ? centAStr(c) : '';
-      $('#ocrSuma').textContent = S.eur(sumaLectura()); $('#ocrCuadre').innerHTML = cuadre(); return;
+      $('#ocrSuma').textContent = S.eur(sumaLectura()); $('#ocrCuadre').innerHTML = cuadre();
+      const rm = $('#ref_' + t.dataset.ocr); if (rm) rm.innerHTML = marcaRef(t.dataset.ocr); return;
     }
     if (t.id === 'fileImp' && t.files[0]) {
       const r = new FileReader();
