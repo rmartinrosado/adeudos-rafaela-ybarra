@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v3.1';
+  const VERSION = 'v3.2';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -380,14 +380,14 @@
     const E = estadoBimestre(), b = E.b, fc = fechaCobro(), m1 = S.MESES[b.idx * 2], m2 = S.MESES[b.idx * 2 + 1];
     const hoy = S.aDate(S.hoyIso()), dias = Math.round((S.aDate(fc) - hoy) / 86400000);
     const fcD = S.aDate(fc), cuando = 'Cobro el ' + diaSemana(fc) + ' 10 de ' + S.MESES[fcD.getMonth()].toLowerCase() + ' de ' + fcD.getFullYear();
-    const cuenta = dias > 0 ? '<b>' + dias + '</b><span>' + (dias === 1 ? 'día' : 'días') + ' al cobro</span>' : dias === 0 ? '<b>Hoy</b><span>día de cobro</span>' : '<b>' + (-dias) + '</b><span>días desde el cobro</span>';
+    const cuenta = dias > 0 ? '<b>' + dias + '</b><span>' + (dias === 1 ? 'día' : 'días') + '<br>al cobro</span>' : dias === 0 ? '<b>Hoy</b><span>día de cobro</span>' : '<b>' + (-dias) + '</b><span>días desde el cobro</span>';
     const total = E.banco + E.ef, efPend = E.ef - E.efCob;
     const pct = v => total ? (v / total * 100).toFixed(2) + '%' : '0';
     const nOk = E.ds.filter(d => esEf(d) ? !!d.nombre : d.nombre && S.ibanValido(d.iban)).length;
     return '' +
       '<section class="hero"><div class="htop"><div><div class="per">Remesa ' + esc(E.nombre) + '</div>' +
-      '<h2>' + m1 + ' y ' + m2.toLowerCase() + '</h2><div class="cuando">' + cuando + '</div></div>' +
-      '<div class="cuenta">' + cuenta + '</div></div>' +
+      '<h2>' + m1 + ' y ' + m2.toLowerCase() + '</h2></div>' +
+      '<div class="cuenta">' + cuenta + '</div></div><div class="cuando">' + cuando + '</div>' +
       fachada(E.est) +
       '<div class="leyenda"><span><i style="background:#e2c995"></i>' + (E.rem ? 'En remesa o pagado' : 'Remesado o pagado') + '</span><span><i style="border:1px solid #d4b57e;background:rgba(212,181,126,.14)"></i>Listo</span>' +
       '<span><i style="background:#b4505c"></i>Efectivo pendiente</span><span><i style="border:1px dashed rgba(255,255,255,.4)"></i>Faltan datos</span></div>' +
