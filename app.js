@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v3.3';
+  const VERSION = 'v3.4';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -689,7 +689,8 @@
       '<label>Fecha de generación</label><input type="date" data-b="fechaGen" value="' + esc(b.fechaGen) + '">' +
       '<div class="row"><div><label>Bimestre</label><select data-b="idx">' + per + '</select></div>' +
       '<div><label>Año</label><input type="number" inputmode="numeric" data-b="anio" value="' + b.anio + '"></div></div>' +
-      '<label>Fecha de cobro (siempre día 10)</label><select data-b="mesCobro">' + meses + '</select></div>' +
+      '<label>Fecha de cobro (siempre día 10)</label><select data-b="mesCobro">' + meses + '</select>' +
+      '<div class="btns"><button class="btn danger sm" style="width:100%" data-act="borrarBorrador">' + ico('aviso') + 'Borrar los datos introducidos</button></div></div>' +
 
       '<div class="card foto-card"><div class="grow"><h2 style="margin-bottom:4px">' + ico('fichero') + 'Documentos</h2><div class="muted">' +
       (docIdx[nombre] ? docIdx[nombre] + ' guardados de ' + esc(nombre) : 'Fotos y listados de ' + esc(nombre)) + (b.lectura ? ', foto leída el ' + fmtFecha(b.lectura.fecha.slice(0, 10)) : '') + '</div></div>' +
@@ -953,6 +954,20 @@
     else if (a === 'paqImp') { const i = $('#paqImp'); i.value = ''; i.click(); }
     else if (a === 'paqAplicar') aplicarPaquete();
     else if (a === 'generarForzar') { forzar = true; cerrar(); generar(); }
+    else if (a === 'borrarBorrador') {
+      const n = Object.values(borrador().importes).filter(v => S.parseImporte(v) > 0).length;
+      abrir('<div class="card"><h2>' + ico('aviso') + 'Borrar datos de la remesa<span class="h2r">' + esc(nombreActual()) + '</span></h2>' +
+        '<p class="muted" style="margin-top:0">Se borran para volver a introducirlos:</p><ul style="margin:0 0 6px;padding-left:20px;line-height:1.7">' +
+        '<li>La fecha de generación (vuelve a hoy)</li><li>Los importes de ' + n + (n === 1 ? ' vecino' : ' vecinos') + ', domiciliados y en efectivo</li>' +
+        '<li>Los vecinos excluidos de la remesa</li><li>La lectura de la foto del documento</li></ul>' +
+        '<p class="muted">Se mantienen el bimestre, la fecha de cobro, los vecinos, el Historial y las fotos guardadas en Documentos.</p>' +
+        '<div class="btns"><button class="btn danger" data-act="borrarBorradorSi">Borrar datos</button><button class="btn sec" data-act="cerrar">Cancelar</button></div></div>');
+    } else if (a === 'borrarBorradorSi') {
+      const b = borrador();
+      b.fechaGen = S.hoyIso(); b.importes = {}; b.excluir = {}; delete b.lectura;
+      b.formatos = { core: true, c1914: true, b2b: true, c1944: true };
+      lectura = null; guardar(); cerrar(); render(); window.scrollTo(0, 0); toast('Datos de ' + nombreActual() + ' borrados');
+    }
     else if (a === 'guardarCargos') guardarCargos();
     else if (a === 'ir') { cerrar(); tab = el.dataset.tab; render(); window.scrollTo(0, 0); }
     else if (a === 'efectivoActual') {
@@ -1041,7 +1056,7 @@
       const b = borrador(), k = t.dataset.b;
       if (k === 'fechaGen') {
         b.fechaGen = t.value;
-        if (t.value) { const p = S.periodoDeFecha(t.value); b.idx = p.idx; b.anio = p.anio; b.mesCobro = mesIso(p.anio, p.idx * 2); }
+        if (t.value) { const p = S.periodoDeFecha(t.value); if (p.idx !== b.idx || p.anio !== b.anio) { b.idx = p.idx; b.anio = p.anio; b.mesCobro = mesIso(p.anio, p.idx * 2); } }
       } else if (k === 'idx' || k === 'anio') {
         b[k] = parseInt(t.value, 10) || (k === 'anio' ? new Date().getFullYear() : 0);
         b.mesCobro = mesIso(b.anio, b.idx * 2);
