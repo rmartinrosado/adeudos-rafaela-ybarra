@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v2.3';
+  const VERSION = 'v2.4';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -236,7 +236,7 @@
       '<path d="M24 78h272M24 137h272" stroke="' + g + '.16)"/>' +
       '<rect x="18" y="197" width="284" height="54" fill="rgba(255,255,255,.05)" stroke="' + g + '.45)"/>' +
       '<path d="M8 251.5h304" stroke="' + g + '.6)" stroke-width="1.5"/>';
-    const cols = { A: 69, B: 160, C: 251 };
+    const cols = { C: 69, B: 160, A: 251 };
     let k = 0;
     const win = (u, inner) => {
       const e = est[u]; if (!e) return '';
@@ -248,8 +248,8 @@
       const l = id && id === st.config.presidenteId ? 'P' : id && id === st.config.vicepresidenteId ? 'V' : '';
       return l ? '<circle cx="' + x + '" cy="' + y + '" r="8" fill="#13223a" stroke="#e2c995" stroke-width="1.4"/><text x="' + x + '" y="' + (y + 4) + '" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="10" font-weight="700" fill="#e2c995">' + l + '</text>' : '';
     };
-    // Bajos: Local 1, portal, Local 2, Local 3
-    const huecos = { L1: 53, L2: 196, L3: 267 };
+    // Bajos: Local 1, Local 2, portal, Local 3
+    const huecos = { L1: 53, L2: 124, L3: 267 };
     ['L1', 'L2', 'L3'].forEach(u => {
       const cx = huecos[u];
       s += win(u, e => {
@@ -261,7 +261,7 @@
       });
     });
     // Portal del edificio: al tocarlo se elige la junta
-    const px = 124, falta = !st.config.presidente || !st.config.vicepresidente;
+    const px = 196, falta = !st.config.presidente || !st.config.vicepresidente;
     s += '<g class="portal' + (falta ? ' llama' : '') + '" data-act="cargos"><title>Portal: elegir presidente y vicepresidente</title>' +
       '<rect x="' + (px - 30) + '" y="199" width="60" height="52" fill="transparent"/>' +
       '<rect x="' + (px - 7) + '" y="201" width="14" height="9" rx="1.5" fill="#e2c995"/><text x="' + px + '" y="208.6" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="8" font-weight="700" fill="#13223a">5</text>' +
@@ -272,7 +272,7 @@
     // Plantas 1 a 3, de abajo arriba
     [1, 2, 3].forEach(f => {
       const top = 19 + (3 - f) * 59 + 9;
-      ['A', 'B', 'C'].forEach(L => {
+      ['C', 'B', 'A'].forEach(L => {
         const cx = cols[L];
         s += win(f + L, e => {
           const c = C[e.estado];
