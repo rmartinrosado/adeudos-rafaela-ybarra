@@ -150,50 +150,66 @@
     return un ? { u: un.u, s: un.por === 'unidad' ? 2 : 1, por: un.por } : null;
   }
   function analizarHoja(texto, ds) {
-    const lineas = String(texto || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    // Une cuentas partidas en dos líneas («148,61+50=» / «198,61», o «148,61+50» / «=198,61»)
+    const crudo = String(texto || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean), lineas = [];
+    crudo.forEach(l => {
+      const prev = lineas[lineas.length - 1], L = numTok(l);
+      if (prev != null && /=\s*$/.test(numTok(prev)) && /^[\s=]*\d/.test(L)) lineas[lineas.length - 1] = prev + ' ' + l;
+      else if (prev != null && /^=/.test(L) && /\d\s*\+\s*\d[\d.,]*\s*$/.test(numTok(prev)) && !/=/.test(prev)) lineas[lineas.length - 1] = prev + ' ' + l;
+      else lineas.push(l);
+    });
     const info = lineas.map(l => {
       const n = norm(l.replace(/\d+[.,]\d{2}/g, ' '));
       return { l, a: anclaHoja(l, n, ds), e: exprIgual(l), total: /\bTOTAL\s*(:|€|EUR)/.test(norm(l)) };
     });
     const nAnclas = info.filter(x => x.a && x.a.s >= 2).length, nExpr = info.filter(x => x.e).length;
     if (nAnclas < 3 || (nExpr < 3 && nAnclas < 6)) return null;
-    let iTotal = info.findIndex((x, i) => x.total && info.slice(0, i).filter(y => y.a).length >= 3);
-    if (iTotal < 0) iTotal = info.length;
-    const asig = {}, cola = [], orden = [];
-    const poner = (u, x, s, por, i) => {
+    const val = e => e.ok || e.fin == null ? (e.suma != null ? e.suma : e.fin) : e.fin;
+    // Total de la hoja: la mayor cuenta de todo el texto (p. ej. «1543+550=2093,63»)
+    let totalDoc = null;
+    info.forEach(x => { if (x.e) { const v = val(x.e); if (v != null && v >= 50000 && (totalDoc == null || v > totalDoc)) totalDoc = v; } });
+    // Bloques: líneas seguidas que hablan del mismo piso o local, con las cuentas que caen dentro
+    const bloques = []; let cur = null; const orden = [];
+    info.forEach((x, i) => {
+      if (x.a) {
+        if (!orden.includes(x.a.u)) orden.push(x.a.u);
+        if (!cur || cur.u !== x.a.u || cur.exprs.length) { cur = { u: x.a.u, s: x.a.s, por: x.a.por, exprs: [] }; bloques.push(cur); }
+        else if (x.a.s > cur.s) { cur.s = x.a.s; cur.por = x.a.por; }
+      }
+      if (x.e && val(x.e) !== totalDoc) { if (cur) cur.exprs.push(Object.assign({ i }, x)); else bloques.push(cur = { u: null, s: 0, exprs: [Object.assign({ i }, x)] }); }
+    });
+    const asig = {};
+    const poner = (u, x, s, por, prio) => {
       const e = x.e, prev = asig[u];
-      if (prev && prev.s >= s) { prev.repetido = true; return; }
+      if (prev && prev.prio >= prio) { prev.repetido = true; return; }
       let imp = e.fin != null ? e.fin : e.suma, corregido = false;
       if (!e.ok && e.suma != null) {
-        // «=1190,69» con una raya leída como 1, o cifra ilegible: manda la suma si la fila anterior la respalda («120+20,69»)
-        const ant = (info[i - 1] && numTok(info[i - 1].l).match(/(\d{2,3})\s*\+\s*(\d{1,3}[.,]\d{2})/)) || null;
+        // «=1190,69» con una raya leída como 1, o cifra ilegible: manda la suma si la fila la respalda («120+20,69»)
+        const cerca = info.slice(Math.max(0, x.i - 3), x.i).map(y => numTok(y.l)).join(' ');
+        const ant = cerca.match(/(\d{2,3})\s*\+\s*(\d{1,3}[.,]\d{2})(?!\s*[=\d])/);
         const base = ant ? valor(ant[1]) + valor(ant[2]) : null;
-        const primero = valor(String(numTok(x.l)).split('=')[0].replace(/^.*?(\d[\d.,]*)\s*\+[^+]*$/, '$1'));
+        const izq = String(numTok(x.l)).split('=')[0].match(/(\d[\d.,]*)\s*\+[^+]*$/);
+        const primero = izq ? valor(izq[1]) : null;
         if (e.fin == null || String(e.fin).endsWith(String(e.suma)) || (base != null && base === primero)) { imp = e.suma; corregido = e.fin != null; }
       }
-      asig[u] = { importe: imp, linea: x.l, por, s, verificado: e.ok, corregido, alt: !e.ok && e.suma != null && e.fin != null && !corregido ? e.suma : null };
+      asig[u] = { importe: imp, linea: x.l, por, s, prio, verificado: e.ok, corregido, alt: !e.ok && e.suma != null && e.fin != null && !corregido ? e.suma : null };
     };
-    let ultima = null;
-    info.forEach((x, i) => {
-      if (x.a) { ultima = { a: x.a, i }; if (i < iTotal && !orden.includes(x.a.u)) orden.push(x.a.u); }
-      if (!x.e || i === iTotal) return;
-      if (i > iTotal) { if (x.a && !asig[x.a.u]) poner(x.a.u, x, 1, x.a.por, i); return; }   // notas bajo el total
-      if (x.a) poner(x.a.u, x, x.a.s, x.a.por, i);
-      else if (ultima && i - ultima.i <= 1) poner(ultima.a.u, x, ultima.a.s, ultima.a.por, i);
-      else cola.push(Object.assign({ i }, x));
+    // 1) Una cuenta dentro del bloque de su piso: texto copiado por filas
+    const cola = [];
+    bloques.forEach(b => {
+      if (b.u && b.exprs.length === 1) poner(b.u, b.exprs[0], b.s, b.por, b.s >= 2 ? 3 : 1);
+      else b.exprs.forEach(x => cola.push(x));
     });
-    // Texto copiado por columnas: las cifras vienen todas seguidas; se asignan por el orden de las filas
-    const sin = orden.filter(u => !asig[u]);
-    if (cola.length && cola.length === sin.length) { sin.forEach((u, k) => poner(u, cola[k], 1, 'orden', cola[k].i)); cola.length = 0; }
-    // Total del documento: la mayor cuenta escrita junto a «TOTAL» o debajo (p. ej. «1543+550=2093,63»)
-    let totalDoc = null;
-    for (let i = iTotal; i < Math.min(info.length, iTotal + 9); i++) {
-      const e = info[i] && info[i].e; if (!e) continue;
-      const v = e.ok || e.fin == null ? (e.suma != null ? e.suma : e.fin) : e.fin;
-      if (v != null && (totalDoc == null || v > totalDoc)) totalDoc = v;
-    }
+    // 2) Cuentas seguidas (texto copiado por columnas): se asignan por el orden de las filas
+    cola.sort((a, b) => a.i - b.i);
+    const primera = cola.length ? cola[0].i : Infinity;
+    const ordenTabla = orden.filter(u => info.some((x, i) => i < primera && x.a && x.a.u === u));
+    const sin = ordenTabla.filter(u => !asig[u] || asig[u].prio < 2);
+    const usadas = [];
+    if (sin.length && cola.length >= sin.length) sin.forEach((u, k) => { poner(u, cola[k], 1, 'orden', 2); usadas.push(cola[k]); });
     const filas = ds.map(d => Object.assign({ deudorId: d.id, unidad: d.unidad }, asig[d.unidad] || { importe: null }));
-    return { filas, sueltas: cola.map((x, idx) => ({ importe: x.e.fin != null ? x.e.fin : x.e.suma, linea: x.l, idx })), totalDoc, lineas, hoja: true };
+    const sueltas = cola.filter(x => !usadas.includes(x)).map((x, idx) => ({ importe: val(x.e), linea: x.l, idx }));
+    return { filas, sueltas, totalDoc, lineas, hoja: true };
   }
 
   function analizar(texto, deudores) {
