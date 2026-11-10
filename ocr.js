@@ -111,8 +111,13 @@
      el DNI, el piso o el nombre; la cifra se comprueba con la suma de su izquierda. */
   // Corrige letras que la escritura a mano suele confundir con cifras, solo en trozos numéricos
   function numTok(l) {
-    return String(l).split(/(\s+)/).map(t => /\d/.test(t) && /^[0-9OoSsVvr√lI|,.+=€:_-]+$/.test(t)
-      ? t.replace(/[Oo]/g, '0').replace(/[SsVvr√]/g, '5').replace(/[lI|]/g, '1') : t).join('');
+    // Cifras escritas a mano: O/о→0, S/V/r/T/г/√→5, l/I/|→1; «÷» es un «=»
+    let s = String(l).split(/(\s+)/).map(t => /\d/.test(t) && /^[0-9OoОоSsVvrTг√lI|,.+=÷€:_-]+$/.test(t)
+      ? t.replace(/[OoОо]/g, '0').replace(/[SsVvrTг√]/g, '5').replace(/[lI|]/g, '1').replace(/÷/g, '=') : t).join('');
+    s = s.replace(/÷/g, '=');
+    // «+50-», «+507191,68», «+50:» → el signo leído en lugar del «=»
+    s = s.replace(/(\+\s*50)\s*(?:[-7:]\s*(?=\d{2,3}[.,]\d{2})|[-:]\s*$)/, '$1=');
+    return s.replace(/=\s*=/g, '=');
   }
   function valor(str) {
     const m = String(str).match(/^\s*(\d{1,3}(?:\.\d{3})+|\d{1,5})(?:\s?[,.]\s?(\d{1,2}))?(?!\d)/);
@@ -126,11 +131,11 @@
   function exprIgual(l) {
     const L = numTok(l), i = L.lastIndexOf('=');
     if (i < 0) return null;
-    const fin = valor(L.slice(i + 1).replace(/^[\s:_\-—–|]+/, ''));
+    const dcha = L.slice(i + 1).replace(/^[\s:_\-—–|]+/, ''), fin = valor(dcha);
     const izq = L.slice(0, i).split('=').pop().match(/\d[\d.,\s]*(?:\+\s*\d[\d.,\s]*)+$/);
     const suma = izq ? sumaExpr(izq[0].trim()) : null;
     if (fin == null && suma == null) return null;
-    return { fin, suma, ok: fin != null && suma != null && fin === suma };
+    return { fin, suma, ok: fin != null && suma != null && fin === suma, dec: /^\s*\d{1,5}\s?[.,]\s?\d/.test(dcha) };
   }
   function anclaHoja(l, n, ds) {
     const dig = l.replace(/[^0-9]/g, '');
@@ -142,71 +147,117 @@
       if (dni.length >= 7 && dig.includes(dni) && (!best || best.s < 3)) best = { u: d.unidad, s: 3, por: 'dni' };
     });
     if (best) return best;
+    // «19 A», «29B», «3° A»: el «º» leído como 9 o 2
+    const p = n.match(/^([1-9])[29O]?\s?([A-D])$/);
+    if (p && ds.some(d => d.unidad === p[1] + p[2])) return { u: p[1] + p[2], s: 2, por: 'unidad' };
     const un = unidadDeLinea(n, ds);
-    if (!un) {
-      const r = ds.find(d => d.tipo === 'local' && [d.rotulo, d.nombre].filter(Boolean).some(x => norm(x).split(' ').some(t => t.length >= 6 && new RegExp('\\b' + t + '\\b').test(n))));
-      if (r) return { u: r.unidad, s: 1, por: 'nombre' };
-    }
-    return un ? { u: un.u, s: un.por === 'unidad' ? 2 : 1, por: un.por } : null;
+    if (un) return { u: un.u, s: un.por === 'unidad' ? 2 : 1, por: un.por };
+    // Rótulo de los locales (DEPORTES, LOCUTORIO, FRUTERIA), aunque falle la primera letra («#RUTERIA»)
+    const toks = n.split(' ').filter(t => t.length >= 5);
+    const r = ds.find(d => d.tipo === 'local' && [d.rotulo, d.nombre].filter(Boolean).some(x => norm(x).split(' ').some(t => t.length >= 6 &&
+      toks.some(k => k === t || (k.length >= 6 && k.slice(1) === t.slice(1))))));
+    return r ? { u: r.unidad, s: 1, por: 'nombre' } : null;
   }
   function analizarHoja(texto, ds) {
-    // Une cuentas partidas en dos líneas («148,61+50=» / «198,61», o «148,61+50» / «=198,61»)
+    // Une cuentas partidas («148,61+50 =» … «198,61»; «147,62+50-» … «= 197,62»), aunque haya una línea en medio
     const crudo = String(texto || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean), lineas = [];
-    crudo.forEach(l => {
-      const prev = lineas[lineas.length - 1], L = numTok(l);
-      if (prev != null && /=\s*$/.test(numTok(prev)) && /^[\s=]*\d/.test(L)) lineas[lineas.length - 1] = prev + ' ' + l;
-      else if (prev != null && /^=/.test(L) && /\d\s*\+\s*\d[\d.,]*\s*$/.test(numTok(prev)) && !/=/.test(prev)) lineas[lineas.length - 1] = prev + ' ' + l;
+    for (let k = 0; k < crudo.length; k++) {
+      const l = crudo[k], L = numTok(l);
+      if (/=\s*$/.test(L) && /\d\s*\+\s*\d/.test(L)) {
+        let j = -1;
+        for (let m = k + 1; m <= Math.min(crudo.length - 1, k + 2); m++) if (/^[\s=]*\d[\d.,\s]*$/.test(numTok(crudo[m]))) { j = m; break; }
+        if (j > 0) { lineas.push(l + ' ' + crudo[j]); for (let m = k + 1; m < j; m++) lineas.push(crudo[m]); k = j; continue; }
+      }
+      const prev = lineas[lineas.length - 1];
+      if (prev != null && /^=/.test(L) && /\d\s*\+\s*\d[\d.,]*\s*$/.test(numTok(prev)) && !/=/.test(numTok(prev))) lineas[lineas.length - 1] = prev + ' ' + l;
       else lineas.push(l);
-    });
+    }
     const info = lineas.map(l => {
       const n = norm(l.replace(/\d+[.,]\d{2}/g, ' '));
-      return { l, a: anclaHoja(l, n, ds), e: exprIgual(l), total: /\bTOTAL\s*(:|€|EUR)/.test(norm(l)) };
+      return { l, a: anclaHoja(l, n, ds), e: exprIgual(l) };
     });
     const nAnclas = info.filter(x => x.a && x.a.s >= 2).length, nExpr = info.filter(x => x.e).length;
     if (nAnclas < 3 || (nExpr < 3 && nAnclas < 6)) return null;
     const val = e => e.ok || e.fin == null ? (e.suma != null ? e.suma : e.fin) : e.fin;
-    // Total de la hoja: la mayor cuenta de todo el texto (p. ej. «1543+550=2093,63»)
+    // Total de la hoja: la mayor cuenta bien formada (p. ej. «1543+550=2093,63»)
     let totalDoc = null;
-    info.forEach(x => { if (x.e) { const v = val(x.e); if (v != null && v >= 50000 && (totalDoc == null || v > totalDoc)) totalDoc = v; } });
-    // Bloques: líneas seguidas que hablan del mismo piso o local, con las cuentas que caen dentro
+    info.forEach(x => { if (x.e && (x.e.ok || x.e.dec)) { const v = val(x.e); if (v != null && v >= 50000 && (totalDoc == null || v > totalDoc)) totalDoc = v; } });
+    // Bloques: líneas seguidas que hablan del mismo piso o local
     const bloques = []; let cur = null; const orden = [];
     info.forEach((x, i) => {
       if (x.a) {
         if (!orden.includes(x.a.u)) orden.push(x.a.u);
-        if (!cur || cur.u !== x.a.u || cur.exprs.length) { cur = { u: x.a.u, s: x.a.s, por: x.a.por, exprs: [] }; bloques.push(cur); }
+        if (!cur || cur.u !== x.a.u || cur.exprs.length) { cur = { u: x.a.u, s: x.a.s, por: x.a.por, exprs: [], ini: i, fin: i }; bloques.push(cur); }
         else if (x.a.s > cur.s) { cur.s = x.a.s; cur.por = x.a.por; }
       }
-      if (x.e && val(x.e) !== totalDoc) { if (cur) cur.exprs.push(Object.assign({ i }, x)); else bloques.push(cur = { u: null, s: 0, exprs: [Object.assign({ i }, x)] }); }
+      if (cur) cur.fin = i;
+      if (x.e && val(x.e) !== totalDoc) { if (cur) cur.exprs.push(Object.assign({ i }, x)); else bloques.push(cur = { u: null, s: 0, exprs: [Object.assign({ i }, x)], ini: i, fin: i }); }
     });
+    // Lo que debería dar la fila según la hoja: «120+ 37,52» → 157,52 + 50 = 207,52
+    const esperadoEn = (desde, hasta) => {
+      for (let i = hasta; i >= Math.max(0, desde); i--) {
+        const m = numTok(info[i].l).match(/(\d{2,3})\s*\+\s*(\d{1,3}\s?[.,]\s?\d{2})(?!\s*[\d=+])/);
+        if (m) return valor(m[1]) + valor(m[2].replace(/\s/g, '')) + 5000;
+      }
+      return null;
+    };
     const asig = {};
-    const poner = (u, x, s, por, prio) => {
+    const poner = (u, x, s, por, prio, esp) => {
       const e = x.e, prev = asig[u];
       if (prev && prev.prio >= prio) { prev.repetido = true; return; }
-      let imp = e.fin != null ? e.fin : e.suma, corregido = false;
-      if (!e.ok && e.suma != null) {
-        // «=1190,69» con una raya leída como 1, o cifra ilegible: manda la suma si la fila la respalda («120+20,69»)
-        const cerca = info.slice(Math.max(0, x.i - 3), x.i).map(y => numTok(y.l)).join(' ');
-        const ant = cerca.match(/(\d{2,3})\s*\+\s*(\d{1,3}[.,]\d{2})(?!\s*[=\d])/);
-        const base = ant ? valor(ant[1]) + valor(ant[2]) : null;
-        const izq = String(numTok(x.l)).split('=')[0].match(/(\d[\d.,]*)\s*\+[^+]*$/);
-        const primero = izq ? valor(izq[1]) : null;
-        if (e.fin == null || String(e.fin).endsWith(String(e.suma)) || (base != null && base === primero)) { imp = e.suma; corregido = e.fin != null; }
-      }
-      asig[u] = { importe: imp, linea: x.l, por, s, prio, verificado: e.ok, corregido, alt: !e.ok && e.suma != null && e.fin != null && !corregido ? e.suma : null };
+      let imp, verificado = false, corregido = false, calculado = false, alt = null;
+      const fin = e.fin, suma = e.suma;
+      if (fin != null && (fin === suma || fin === esp)) { imp = fin; verificado = true; }
+      else if (suma != null && suma === esp) { imp = suma; corregido = fin != null; verificado = fin == null; }
+      else if (fin == null && suma != null) imp = suma;
+      else if (fin != null && suma != null && String(fin).endsWith(String(suma))) { imp = suma; corregido = true; }
+      else if (esp != null && (fin == null || fin > esp * 2 || fin < esp / 2)) { imp = esp; calculado = true; }
+      else { imp = fin; alt = suma; }
+      asig[u] = { importe: imp, linea: x.l, por, s, prio, verificado, corregido, calculado, alt };
     };
-    // 1) Una cuenta dentro del bloque de su piso: texto copiado por filas
+    // 1) Una cuenta dentro del bloque de su piso (texto copiado por filas o casilla a casilla)
     const cola = [];
-    bloques.forEach(b => {
-      if (b.u && b.exprs.length === 1) poner(b.u, b.exprs[0], b.s, b.por, b.s >= 2 ? 3 : 1);
-      else b.exprs.forEach(x => cola.push(x));
+    bloques.forEach((b, k) => {
+      const esp = b.u ? esperadoEn(b.ini, b.exprs.length ? b.exprs[0].i : b.fin) : null;
+      if (b.u && b.exprs.length === 1) { poner(b.u, b.exprs[0], b.s, b.por, b.s >= 2 ? 3 : 1, esp); return; }
+      if (b.u && !b.exprs.length) {
+        // Sin «=»: «130+50» de un local, o la fila de un piso con la cuenta ilegible
+        for (let i = b.ini; i <= b.fin; i++) {
+          const m = numTok(info[i].l).match(/^\s*(\d{2,3})\s*\+\s*50\s*$/);
+          if (m) { poner(b.u, { e: { fin: null, suma: valor(m[1]) + 5000 }, l: info[i].l }, b.s, b.por, 2, null); asig[b.u].calculado = true; return; }
+        }
+        if (esp != null && b.s >= 2) { poner(b.u, { e: { fin: null, suma: null }, l: info[b.ini].l }, b.s, b.por, 2, esp); }
+        return;
+      }
+      // Varios nombres seguidos y luego sus cuentas (notas bajo la tabla: DEPORTES / LOCUTORIO / FRUTERIA)
+      if (b.u && b.exprs.length > 1) {
+        const nombres = []; let j = k;
+        while (j >= 0 && (j === k || (bloques[j].fin < b.exprs[0].i && !bloques[j].exprs.length)) && nombres.length < b.exprs.length) { nombres.unshift(bloques[j]); j--; }
+        const seguidas = b.exprs.every((x, q) => q === 0 || x.i - b.exprs[q - 1].i === 1);
+        if (seguidas && nombres.length >= 2) {
+          // los nombres sin ancla («#RUTERIA» ilegible) ocupan su hueco
+          const huecos = info.slice(nombres[0].ini, b.exprs[0].i).filter(y => !y.e && y.l.length < 25);
+          huecos.forEach((y, q) => { if (b.exprs[q] && y.a) poner(y.a.u, b.exprs[q], 1, y.a.por, 1, null); });
+          b.exprs.slice(huecos.length).forEach(x => cola.push(x));
+          return;
+        }
+      }
+      b.exprs.forEach(x => cola.push(x));
     });
-    // 2) Cuentas seguidas (texto copiado por columnas): se asignan por el orden de las filas
+    // 2) Cifras seguidas de toda la tabla (texto copiado por columnas): por el orden de las filas
     cola.sort((a, b) => a.i - b.i);
     const primera = cola.length ? cola[0].i : Infinity;
     const ordenTabla = orden.filter(u => info.some((x, i) => i < primera && x.a && x.a.u === u));
     const sin = ordenTabla.filter(u => !asig[u] || asig[u].prio < 2);
     const usadas = [];
-    if (sin.length && cola.length >= sin.length) sin.forEach((u, k) => { poner(u, cola[k], 1, 'orden', 2); usadas.push(cola[k]); });
+    if (sin.length >= 3 && sin.length >= ordenTabla.length / 2 && cola.length >= sin.length) sin.forEach((u, k) => { poner(u, cola[k], 1, 'orden', 2, null); usadas.push(cola[k]); });
+    // 3) Si solo falta un domiciliado, sale de restar al total de la hoja los que sí se han leído
+    const dom = ds.filter(d => d.pago !== 'efectivo' && orden.includes(d.unidad));
+    const falta = dom.filter(d => !asig[d.unidad] || asig[d.unidad].importe == null);
+    if (totalDoc != null && falta.length === 1) {
+      const resto = totalDoc - dom.filter(d => d !== falta[0]).reduce((a, d) => a + asig[d.unidad].importe, 0);
+      if (resto > 0 && resto < totalDoc / 2) asig[falta[0].unidad] = { importe: resto, linea: 'Total de la hoja menos el resto de domiciliados', por: 'total', prio: 1, calculado: true };
+    }
     const filas = ds.map(d => Object.assign({ deudorId: d.id, unidad: d.unidad }, asig[d.unidad] || { importe: null }));
     const sueltas = cola.filter(x => !usadas.includes(x)).map((x, idx) => ({ importe: val(x.e), linea: x.l, idx }));
     return { filas, sueltas, totalDoc, lineas, hoja: true };

@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v3.7';
+  const VERSION = 'v3.8';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -516,7 +516,8 @@
     const filas = ds.map(d => {
       const f = porId[d.id] || {}, v = L.valores[d.id];
       const chip = f.importe == null ? '<span class="chip errc">No encontrado</span>' :
-        (f.verificado ? '<span class="chip okc">Cuadra la suma</span>' : f.corregido ? '<span class="chip frst">Corregido con la suma</span>' : f.alt != null ? '<span class="chip errc">Suma: ' + S.eur(f.alt) + '</span>' : '<span class="chip okc">Leído</span>') +
+        (f.verificado ? '<span class="chip okc">Cuadra la suma</span>' : f.corregido ? '<span class="chip frst">Corregido con la suma</span>' :
+         f.por === 'total' ? '<span class="chip frst">Calculado con el total</span>' : f.calculado ? '<span class="chip frst">Calculado, revísalo</span>' : f.alt != null ? '<span class="chip errc">Suma: ' + S.eur(f.alt) + '</span>' : '<span class="chip okc">Leído</span>') +
         (f.por === 'orden' ? ' <span class="chip ef">Por orden</span>' : f.por === 'nombre' ? ' <span class="chip ef">Por nombre</span>' : '') + (f.repetido ? ' <span class="chip frst">Repetido</span>' : '');
       return '<div class="item"><div class="unit' + (d.tipo === 'local' ? ' local' : '') + '">' + esc(corto(d)) + '</div>' +
         '<div class="grow"><div class="name">' + esc(nomVis(d) || etiqueta(d)) + '</div><div>' + chip + (esEf(d) ? ' <span class="chip ef">Efectivo</span>' : '') + '</div>' +
