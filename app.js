@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v3.9';
+  const VERSION = 'v4.0';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -120,6 +120,14 @@
       if (d.tipo !== tipo) d.tipo = tipo;
     });
     st.config.migRot31 = true;
+    // v4.0: Locutorio y Frutería pagan la cuota por banco y el agua en efectivo; Deportes Gálvez todo en efectivo
+    if (!st.config.migAgua) {
+      st.deudores.forEach(d => {
+        if (d.unidad === 'L2' || d.unidad === 'L3') { d.pago = 'domiciliado'; d.agua = true; }
+        if (d.unidad === 'L1') { d.pago = 'efectivo'; d.agua = false; }
+      });
+      st.config.migAgua = true;
+    }
   }
   function guardar() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { toast('No se pudo guardar en el dispositivo'); } }
 
@@ -127,6 +135,8 @@
   function corto(d) { return d.tipo === 'local' ? 'L' + d.unidad.replace(/^L/, '') : d.unidad; }
   function ordenados() { return st.deudores.slice().sort((a, b) => (a.orden ?? 99) - (b.orden ?? 99)); }
   const esEf = d => d.pago === 'efectivo';
+  const conAgua = d => !esEf(d) && !!d.agua;
+  const aguaDe = () => { const b = borrador(); if (!b.importesAgua) b.importesAgua = {}; return b.importesAgua; };
   const nomVis = d => d.tipo === 'local' ? (d.rotulo || d.nombre || '') : (d.nombre || '');
   const centAStr = c => (c / 100).toFixed(2).replace('.', ',');
   function idAcrCalc() { return S.idAcreedor(st.config.nif, st.config.sufijo); }
@@ -146,7 +156,8 @@
   }
   function cargarImportes(r) {
     const imp = st.borrador.importes;
-    r.items.concat(r.efectivo || []).forEach(i => { if (i.importe > 0) imp[i.deudorId] = centAStr(i.importe); });
+    if (!st.borrador.importesAgua) st.borrador.importesAgua = {};
+    r.items.concat(r.efectivo || []).forEach(i => { if (i.importe > 0) (i.concepto === 'Agua' ? st.borrador.importesAgua : imp)[i.deudorId] = centAStr(i.importe); });
   }
   function ultimaRemesa() { return st.remesas.slice().sort((a, b) => b.fechaCobro.localeCompare(a.fechaCobro))[0]; }
   function nombreActual() { const b = borrador(); return S.nombreRemesa(b.idx, b.anio); }
@@ -210,6 +221,12 @@
       return { deudorId: d.id, unidad: d.unidad, nombre: nomVis(d) || etiqueta(d), etiqueta: etiqueta(d), importe: imp > 0 ? imp : 0,
         cobrado: ant ? ant.cobrado : false, fechaPago: ant ? ant.fechaPago : '' };
     });
+    ordenados().filter(d => d.activo && conAgua(d)).forEach(d => {
+      const imp = S.parseImporte(aguaDe()[d.id]);
+      const ant = previa && (previa.efectivo || []).find(e => e.deudorId === d.id && e.concepto === 'Agua');
+      efectivo.push({ deudorId: d.id, unidad: d.unidad, nombre: nomVis(d) || etiqueta(d), etiqueta: etiqueta(d) + ' (agua)', concepto: 'Agua', importe: imp > 0 ? imp : 0,
+        cobrado: ant ? ant.cobrado : false, fechaPago: ant ? ant.fechaPago : '' });
+    });
     const sinImp = efectivo.filter(e => !e.importe).map(e => e.etiqueta);
     if (sinImp.length) avisos.push('Sin importe en efectivo: ' + sinImp.join(', ') + '.');
     if (b.formatos.b2b || b.formatos.c1944) avisos.push('B2B solo lo aceptan cuentas de empresas o autónomos con contrato B2B en su banco. Para particulares usa CORE.');
@@ -265,7 +282,8 @@
       banco = rem.items.reduce((s, i) => s + i.importe, 0);
       (rem.efectivo || []).forEach(e => { ef += e.importe; if (e.cobrado) efCob += e.importe; });
     } else {
-      ds.forEach(d => { const c = S.parseImporte(b.importes[d.id]); if (!(c > 0)) return; if (esEf(d)) ef += c; else if (!b.excluir[d.id]) banco += c; });
+      ds.forEach(d => { const c = S.parseImporte(b.importes[d.id]); if (c > 0) { if (esEf(d)) ef += c; else if (!b.excluir[d.id]) banco += c; } });
+      ds.filter(conAgua).forEach(d => { const c = S.parseImporte(aguaDe()[d.id]); if (c > 0) ef += c; });
     }
     const est = {};
     ds.forEach(d => {
@@ -274,7 +292,10 @@
         const x = rem && (rem.efectivo || []).find(y => y.deudorId === d.id && y.importe > 0);
         e = x ? (x.cobrado ? 'hecho' : 'pendiente') : (nomVis(d) ? 'listo' : 'falta');
       } else if (!d.nombre || !S.ibanValido(d.iban)) e = 'falta';
-      else e = rem && rem.items.some(i => i.deudorId === d.id) ? 'hecho' : 'listo';
+      else {
+        const ag = rem && (rem.efectivo || []).find(y => y.deudorId === d.id && y.concepto === 'Agua' && y.importe > 0);
+        e = rem && rem.items.some(i => i.deudorId === d.id) ? (ag && !ag.cobrado ? 'pendiente' : 'hecho') : 'listo';
+      }
       est[d.unidad] = { estado: e, id: d.id, nombre: nomVis(d) };
     });
     // Los dados de baja siguen en el dibujo (atenuados) para poder tocarlos y reactivarlos
@@ -461,8 +482,9 @@
   function analizarTexto(texto) {
     const res = window.OCR.analizar(texto, st.deudores.filter(d => d.activo));
     const valores = {};
-    res.filas.forEach(f => { valores[f.deudorId] = f.importe; });
-    lectura = { res, foto: fotoActual.url, valores, texto, docId: fotoActual.docId };
+    const valoresAgua = {};
+    res.filas.forEach(f => { valores[f.deudorId] = f.importe; if (f.extra != null) valoresAgua[f.deudorId] = f.extra; });
+    lectura = { res, foto: fotoActual.url, valores, valoresAgua, texto, docId: fotoActual.docId };
     revisionFoto();
   }
   async function leerAuto() {
@@ -478,12 +500,23 @@
         '</span></div><div class="btns"><button class="btn oro" data-act="leerVivo">' + ico('escanear') + 'Usar Texto en vivo</button><button class="btn sec" data-act="cerrar">Cerrar</button></div></div>');
     }
   }
+  function sumaBanco() { return st.deudores.filter(d => !esEf(d)).reduce((a, d) => a + (lectura.valores[d.id] > 0 ? lectura.valores[d.id] : 0), 0); }
+  function sumaEfLect() {
+    return st.deudores.filter(esEf).reduce((a, d) => a + (lectura.valores[d.id] > 0 ? lectura.valores[d.id] : 0), 0) +
+      Object.values(lectura.valoresAgua || {}).reduce((a, v) => a + (v > 0 ? v : 0), 0);
+  }
   function sumaLectura() { return Object.values(lectura.valores).reduce((s, v) => s + (v > 0 ? v : 0), 0); }
   // Importes del listado del banco (remesa del Historial con el mismo nombre), para contrastar la lectura
   function refBanco() {
     const r = st.remesas.find(x => x.nombre === nombreActual()); if (!r) return null;
-    const m = {}; r.items.concat(r.efectivo || []).forEach(i => { if (i.importe > 0) m[i.deudorId] = i.importe; });
+    const m = {}; r.items.concat((r.efectivo || []).filter(e => e.concepto !== 'Agua')).forEach(i => { if (i.importe > 0) m[i.deudorId] = i.importe; });
     return { nombre: r.nombre, m, importado: !!r.importado };
+  }
+  function marcaRefAgua(id) {
+    const r = st.remesas.find(x => x.nombre === nombreActual()); if (!r) return '';
+    const e = (r.efectivo || []).find(x => x.deudorId === id && x.concepto === 'Agua'); if (!e || !e.importe) return '';
+    const ok = (lectura.valoresAgua || {})[id] === e.importe;
+    return '<span style="color:' + (ok ? 'var(--ok)' : 'var(--err)') + '">' + (ok ? '✓ ' : '≠ ') + 'Remesa ' + S.eur(e.importe) + '</span>';
   }
   function marcaRef(id) {
     const ref = refBanco(); if (!ref || ref.m[id] == null) return '';
@@ -525,7 +558,10 @@
       return '<div class="item"><div class="unit' + (d.tipo === 'local' ? ' local' : '') + '">' + esc(corto(d)) + '</div>' +
         '<div class="grow"><div class="name">' + esc(nomVis(d) || etiqueta(d)) + '</div><div>' + chip + (esEf(d) ? ' <span class="chip ef">Efectivo</span>' : '') + '</div>' +
         (f.linea ? '<div class="muted linea">' + esc(f.linea) + '</div>' : '') + '<div class="muted" id="ref_' + d.id + '">' + marcaRef(d.id) + '</div></div>' +
-        '<input class="amount" inputmode="decimal" placeholder="0,00 €" data-ocr="' + d.id + '" value="' + (v > 0 ? centAStr(v) : '') + '"></div>';
+        '<input class="amount" inputmode="decimal" placeholder="0,00 €" data-ocr="' + d.id + '" value="' + (v > 0 ? centAStr(v) : '') + '"></div>' +
+        (conAgua(d) || f.extra != null ? '<div class="item" style="border-top:0;padding-top:0"><div style="width:48px;flex:none"></div><div class="grow muted">Agua en efectivo' +
+          (f.extra != null ? ', leído de la nota de debajo' : '') + '<div id="refa_' + d.id + '">' + marcaRefAgua(d.id) + '</div></div>' +
+          '<input class="amount" inputmode="decimal" placeholder="0,00 €" data-ocragua="' + d.id + '" value="' + ((L.valoresAgua || {})[d.id] > 0 ? centAStr(L.valoresAgua[d.id]) : '') + '"></div>' : '');
     }).join('');
     const opts = '<option value="">Asignar a…</option>' + ds.map(d => '<option value="' + d.id + '">' + esc(etiqueta(d) + (d.nombre ? ', ' + d.nombre : '')) + '</option>').join('');
     const sueltas = L.res.sueltas.length ? '<h2 style="margin-top:18px">' + ico('info') + 'Importes sin asignar</h2>' +
@@ -535,7 +571,8 @@
       '<div class="muted" style="margin:-6px 0 8px">Lector ' + esc(window.OCR.version || '') + (L.res.hoja ? ', formato hoja de pagos' : ', formato general') + '</div>' +
       '<img class="foto" src="' + L.foto + '" alt="Foto del documento">' +
       '<div id="ocrCuadre">' + cuadre() + '</div>' + filas +
-      '<div class="tot"><span class="muted">Suma leída</span><span class="big" id="ocrSuma">' + S.eur(sumaLectura()) + '</span></div>' +
+      '<div class="tot"><span class="muted">Al banco</span><span class="big" id="ocrSuma">' + S.eur(sumaBanco()) + '</span></div>' +
+      '<div class="tot" style="border-top:0;margin-top:0;padding-top:4px"><span class="muted">En efectivo</span><span class="big" style="font-size:18px" id="ocrSumaEf">' + S.eur(sumaEfLect()) + '</span></div>' +
       sueltas +
       '<details class="texto"><summary>Ver el texto leído</summary><pre>' + esc(L.texto) + '</pre></details>' +
       '<div class="btns" style="margin-top:8px"><button class="btn sec sm" style="width:100%" data-act="copiarDiag">' + ico('fichero') + 'Copiar diagnóstico para enviárselo a Claude</button></div>' +
@@ -546,7 +583,8 @@
   function aplicarLectura() {
     const b = borrador(); let n = 0;
     Object.entries(lectura.valores).forEach(([id, v]) => { if (v > 0) { b.importes[id] = centAStr(v); b.excluir[id] = false; n++; } });
-    b.lectura = { fecha: new Date().toISOString(), valores: Object.assign({}, lectura.valores), totalDoc: lectura.res.totalDoc, docId: lectura.docId };
+    Object.entries(lectura.valoresAgua || {}).forEach(([id, v]) => { if (v > 0) aguaDe()[id] = centAStr(v); });
+    b.lectura = { fecha: new Date().toISOString(), valores: Object.assign({}, lectura.valores), valoresAgua: Object.assign({}, lectura.valoresAgua || {}), totalDoc: lectura.res.totalDoc, docId: lectura.docId };
     guardar(); cerrar(); tab = 'remesa'; render(); window.scrollTo(0, 0);
     toast('Importes aplicados a ' + n + (n === 1 ? ' vecino' : ' vecinos'));
   }
@@ -690,8 +728,10 @@
     st.remesas.push({ id: uid(), generado: new Date().toISOString(), importado: true, formatos: { core: true, c1914: true, b2b: false, c1944: false },
       nombre: R.nombre, fechaGen: R.fechaGen, fechaCobro: R.fechaCobro,
       efectivo: (R.efectivo || []).map(e => { const d = st.deudores.find(x => x.unidad === e.unidad); if (!d) return null;
-        if (!b.importes[d.id]) b.importes[d.id] = centAStr(e.importe);
-        return { deudorId: d.id, unidad: d.unidad, nombre: nomVis(d) || etiqueta(d), etiqueta: etiqueta(d), importe: e.importe, cobrado: !!e.cobrado, fechaPago: e.cobrado ? R.fechaCobro : '' }; }).filter(Boolean),
+        const agua = e.concepto === 'Agua', dest = agua ? aguaDe() : b.importes;
+        if (agua) d.agua = true;
+        if (!S.parseImporte(dest[d.id])) dest[d.id] = centAStr(e.importe);
+        return { deudorId: d.id, unidad: d.unidad, nombre: nomVis(d) || etiqueta(d), etiqueta: etiqueta(d) + (agua ? ' (agua)' : ''), concepto: e.concepto || '', importe: e.importe, cobrado: !!e.cobrado, fechaPago: e.cobrado ? R.fechaCobro : '' }; }).filter(Boolean),
       acreedor: { nombre: c.nombre, id: idAcr(), iban: S.normIban(c.iban), bic: (c.bic || '').toUpperCase(), d1: c.direccion, d2: c.cp + ' ' + c.localidad, d3: c.provincia, pais: 'ES' }, items });
     guardar();
     if (P.documento && P.documento.base64) {
@@ -725,7 +765,7 @@
   function vistaRemesa() {
     const b = borrador(), nombre = nombreActual(), fc = fechaCobro();
     const ds = ordenados().filter(d => d.activo && !esEf(d));
-    const efs = ordenados().filter(d => d.activo && esEf(d));
+    const efs = ordenados().filter(d => d.activo && (esEf(d) || conAgua(d)));
     let total = 0, n = 0, totEf = 0;
     const filas = ds.map(d => {
       const ex = !!b.excluir[d.id], imp = S.parseImporte(b.importes[d.id]);
@@ -741,10 +781,10 @@
         '</div>';
     }).join('');
     const filasEf = efs.map(d => {
-      const imp = S.parseImporte(b.importes[d.id]); if (imp > 0) totEf += imp;
+      const agua = conAgua(d), v = agua ? aguaDe()[d.id] : b.importes[d.id], imp = S.parseImporte(v); if (imp > 0) totEf += imp;
       return '<div class="item"><div class="unit' + (d.tipo === 'local' ? ' local' : '') + '">' + esc(corto(d)) + '</div>' +
-        '<div class="grow"><div class="name">' + esc(nomVis(d) || etiqueta(d)) + '</div><div class="muted"><span class="chip ef">EFECTIVO</span></div></div>' +
-        '<input class="amount" inputmode="decimal" placeholder="0,00 €" data-imp="' + d.id + '" value="' + esc(b.importes[d.id] || '') + '"></div>';
+        '<div class="grow"><div class="name">' + esc(nomVis(d) || etiqueta(d)) + '</div><div class="muted"><span class="chip ef">' + (agua ? 'Agua en efectivo' : 'Todo en efectivo') + '</span></div></div>' +
+        '<input class="amount" inputmode="decimal" placeholder="0,00 €" ' + (agua ? 'data-impagua' : 'data-imp') + '="' + d.id + '" value="' + esc(v || '') + '"></div>';
     }).join('');
     const per = S.BIMESTRES.map((t, i) => '<option value="' + i + '"' + (i === b.idx ? ' selected' : '') + '>' + t + '</option>').join('');
     const meses = opcionesMesCobro().map(o => '<option value="' + o.v + '"' + (o.v === b.mesCobro ? ' selected' : '') + '>10 de ' + o.t + '</option>').join('');
@@ -788,9 +828,9 @@
     if (!r.errores.length && L && !forzar) {
       const dif = [];
       r.remesa.items.concat(r.efectivo.filter(e => e.importe)).forEach(i => {
-        const v = L.valores[i.deudorId];
+        const v = i.concepto === 'Agua' ? (L.valoresAgua || {})[i.deudorId] : L.valores[i.deudorId];
         if (v != null && v !== i.importe) dif.push(etiqueta(st.deudores.find(d => d.id === i.deudorId)) + ': foto ' + S.eur(v) + ', remesa ' + S.eur(i.importe));
-        if (v == null) dif.push(etiqueta(st.deudores.find(d => d.id === i.deudorId)) + ': no aparece en la foto');
+        if (v == null) dif.push(etiqueta(st.deudores.find(d => d.id === i.deudorId)) + (i.concepto === 'Agua' ? ' (agua)' : '') + ': no aparece en la foto');
       });
       L.dif = dif.length;
       if (dif.length) {
@@ -881,7 +921,8 @@
       '<div class="row"><div><label>Ref. mandato</label><input name="mandato" value="' + esc(d.mandato) + '" autocapitalize="characters"></div>' +
       '<div><label>Firma mandato</label><input type="date" name="fechaMandato" value="' + esc(d.fechaMandato) + '"></div></div>' +
       '<p class="muted">Si ya se le cobraba por domiciliación antes, deja la referencia y fecha que use el banco. 31/10/2009 es la fecha estándar de las domiciliaciones migradas a SEPA.</p>' +
-      '<label class="check"><input type="checkbox" name="previos"' + (d.previos ? ' checked' : '') + '><span>Ya tuvo cobros domiciliados antes (usar RCUR)</span></label></div>' +
+      '<label class="check"><input type="checkbox" name="previos"' + (d.previos ? ' checked' : '') + '><span>Ya tuvo cobros domiciliados antes (usar RCUR)</span></label>' +
+      '<label class="check"><input type="checkbox" name="agua"' + (d.agua ? ' checked' : '') + '><span>Además paga el agua aparte, en efectivo</span></label></div>' +
       '<label class="check"><input type="checkbox" name="activo"' + (d.activo ? ' checked' : '') + '><span>Activo en las remesas</span></label>' +
       '<div class="btns"><button type="submit" class="btn">Guardar</button><button type="button" class="btn sec" data-act="cerrar">Cancelar</button></div>' +
       (nuevo ? '' : esBase(d) ? '<p class="muted">Para que no entre en las remesas, desmarca «Activo en las remesas»: seguirá en el dibujo, atenuado.</p>' :
@@ -906,7 +947,7 @@
     const nif = f.nif.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (nif && !S.validarNif(nif).ok && !confirm('El DNI/NIF no parece correcto. ¿Guardar de todos modos?')) return;
     const datos = { pago: f.pago.value, tipo, unidad, nombre: f.nombre.value.trim(), rotulo: tipo === 'local' && f.rotulo ? f.rotulo.value.trim() : '', nif, iban, bic: f.bic.value.toUpperCase().replace(/[^A-Z0-9]/g, '') || S.bicDeIban(iban),
-      mandato: S.limpiar(f.mandato.value).toUpperCase() || ('RY5-' + unidad), fechaMandato: f.fechaMandato.value, previos: f.previos.checked, activo: f.activo.checked };
+      mandato: S.limpiar(f.mandato.value).toUpperCase() || ('RY5-' + unidad), fechaMandato: f.fechaMandato.value, previos: f.previos.checked, agua: f.pago.value !== 'efectivo' && f.agua.checked, activo: f.activo.checked };
     if (id) Object.assign(st.deudores.find(x => x.id === id), datos);
     else st.deudores.push(Object.assign(deudorBase(unidad, tipo, '', st.deudores.length), datos));
     guardar(); cerrar(); render(); toast('Deudor guardado');
@@ -939,7 +980,7 @@
       '<div class="tot"><span class="muted">Total banco</span><span class="big" style="font-size:22px">' + S.eur(r.items.reduce((s, i) => s + i.importe, 0)) + '</span></div>' +
       ((r.efectivo || []).some(e => e.importe) ? '<h2 style="margin-top:18px">Efectivo</h2>' + r.efectivo.filter(e => e.importe).map(e =>
         '<div class="item"><input type="checkbox" data-efc="' + r.id + '|' + e.deudorId + '"' + (e.cobrado ? ' checked' : '') + ' aria-label="Cobrado">' +
-        '<div class="unit local">' + esc(e.unidad) + '</div><div class="grow"><div class="name">' + esc(e.nombre) + '</div><div class="muted">' +
+        '<div class="unit local">' + esc(e.unidad) + '</div><div class="grow"><div class="name">' + esc(e.nombre) + (e.concepto === 'Agua' ? ' <span class="chip ef">Agua</span>' : '') + '</div><div class="muted">' +
         (e.cobrado ? '<span style="color:var(--ok)">Cobrado ' + fmtFecha(e.fechaPago) + '</span>' : '<span style="color:var(--warn)">Pendiente</span>') + '</div></div><b>' + S.eur(e.importe) + '</b></div>').join('') +
         '<p class="muted">Marca la casilla cuando el local entregue el efectivo.</p>' : '') +
       '<div class="btns"><button class="btn sec" data-act="cerrar">Cerrar</button></div></div>');
@@ -990,6 +1031,7 @@
     let ef = 0;
     st.deudores.filter(d => d.activo && !esEf(d) && !b.excluir[d.id]).forEach(d => { const c = S.parseImporte(b.importes[d.id]); if (c > 0) { total += c; n++; } });
     st.deudores.filter(d => d.activo && esEf(d)).forEach(d => { const c = S.parseImporte(b.importes[d.id]); if (c > 0) ef += c; });
+    st.deudores.filter(d => d.activo && conAgua(d)).forEach(d => { const c = S.parseImporte(aguaDe()[d.id]); if (c > 0) ef += c; });
     const tEl = $('#totRem'), nEl = $('#nRem'), eEl = $('#totEf'); if (tEl) tEl.textContent = S.eur(total); if (nEl) nEl.textContent = n + ' adeudos'; if (eEl) eEl.textContent = S.eur(ef);
   }
 
@@ -1052,10 +1094,10 @@
         '<div class="btns"><button class="btn danger" data-act="borrarImportes">Borrar solo los importes</button></div>' +
         '<div class="btns" style="margin-top:8px"><button class="btn danger" data-act="borrarBorradorSi">Borrar todo</button><button class="btn sec" data-act="cerrar">Cancelar</button></div></div>');
     } else if (a === 'borrarImportes') {
-      borrador().importes = {}; guardar(); cerrar(); render(); toast('Importes de ' + nombreActual() + ' borrados');
+      borrador().importes = {}; borrador().importesAgua = {}; guardar(); cerrar(); render(); toast('Importes de ' + nombreActual() + ' borrados');
     } else if (a === 'borrarBorradorSi') {
       const b = borrador();
-      b.fechaGen = S.hoyIso(); b.importes = {}; b.excluir = {}; delete b.lectura;
+      b.fechaGen = S.hoyIso(); b.importes = {}; b.importesAgua = {}; b.excluir = {}; delete b.lectura;
       b.formatos = { core: true, c1914: true, b2b: true, c1944: true };
       lectura = null; guardar(); cerrar(); render(); window.scrollTo(0, 0); toast('Datos de ' + nombreActual() + ' borrados');
     }
@@ -1125,11 +1167,16 @@
       const x = lectura.res.sueltas[+t.dataset.asig]; lectura.valores[t.value] = x.importe;
       const inp = document.querySelector('[data-ocr="' + t.value + '"]'); if (inp) inp.value = centAStr(x.importe);
       const rm = $('#ref_' + t.value); if (rm) rm.innerHTML = marcaRef(t.value);
-      $('#ocrSuma').textContent = S.eur(sumaLectura()); $('#ocrCuadre').innerHTML = cuadre(); return;
+      $('#ocrSuma').textContent = S.eur(sumaBanco()); $('#ocrSumaEf').textContent = S.eur(sumaEfLect()); $('#ocrCuadre').innerHTML = cuadre(); return;
+    }
+    if (t.dataset.ocragua) {
+      const c = S.parseImporte(t.value); if (!lectura.valoresAgua) lectura.valoresAgua = {};
+      lectura.valoresAgua[t.dataset.ocragua] = c > 0 ? c : null; t.value = c > 0 ? centAStr(c) : '';
+      const rm = $('#refa_' + t.dataset.ocragua); if (rm) rm.innerHTML = marcaRefAgua(t.dataset.ocragua); $('#ocrSumaEf').textContent = S.eur(sumaEfLect()); return;
     }
     if (t.dataset.ocr) {
       const c = S.parseImporte(t.value); lectura.valores[t.dataset.ocr] = c > 0 ? c : null; t.value = c > 0 ? centAStr(c) : '';
-      $('#ocrSuma').textContent = S.eur(sumaLectura()); $('#ocrCuadre').innerHTML = cuadre();
+      $('#ocrSuma').textContent = S.eur(sumaBanco()); $('#ocrSumaEf').textContent = S.eur(sumaEfLect()); $('#ocrCuadre').innerHTML = cuadre();
       const rm = $('#ref_' + t.dataset.ocr); if (rm) rm.innerHTML = marcaRef(t.dataset.ocr); return;
     }
     if (t.id === 'fileImp' && t.files[0]) {
@@ -1164,6 +1211,12 @@
     } else if (t.form && t.form.id === 'fd' && t.name === 'tipo') { const c = $('#campoRotulo'); if (c) c.hidden = t.value !== 'local'; }
     else if (t.form && t.form.id === 'fd' && t.name === 'pago') { $('#bancoCampos').hidden = t.value === 'efectivo'; }
     else if (t.dataset.incl) { borrador().excluir[t.dataset.incl] = !t.checked; guardar(); render(); }
+    else if (t.dataset.impagua) {
+      const c = S.parseImporte(t.value);
+      if (t.value && !(c >= 0)) { toast('Importe no válido'); return; }
+      aguaDe()[t.dataset.impagua] = t.value ? centAStr(c) : ''; t.value = aguaDe()[t.dataset.impagua];
+      guardar(); actualizarTotal();
+    }
     else if (t.dataset.imp) {
       const c = S.parseImporte(t.value);
       if (t.value && !(c >= 0)) { toast('Importe no válido'); return; }

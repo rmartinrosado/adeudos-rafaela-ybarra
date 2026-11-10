@@ -219,7 +219,12 @@
     const cola = [];
     bloques.forEach((b, k) => {
       const esp = b.u ? esperadoEn(b.ini, b.exprs.length ? b.exprs[0].i : b.fin) : null;
-      if (b.u && b.exprs.length === 1) { poner(b.u, b.exprs[0], b.s, b.por, b.s >= 2 ? 3 : 1, esp); return; }
+      if (b.u && b.exprs.length === 1) {
+        const prev = asig[b.u];
+        // Un local que ya tiene su fila y vuelve a salir solo por el nombre: es la nota del agua (efectivo aparte)
+        if (prev && !prev.nota && b.s === 1 && /^L\d/.test(b.u)) { prev.extra = val(b.exprs[0].e); prev.lineaExtra = b.exprs[0].l; return; }
+        poner(b.u, b.exprs[0], b.s, b.por, b.s >= 2 ? 3 : 1, esp); return;
+      }
       if (b.u && !b.exprs.length) {
         // Sin «=»: «130+50» de un local, o la fila de un piso con la cuenta ilegible
         for (let i = b.ini; i <= b.fin; i++) {
@@ -237,7 +242,13 @@
         if (seguidas && nombres.length >= 2) {
           // los nombres sin ancla («#RUTERIA» ilegible) ocupan su hueco
           const huecos = info.slice(nombres[0].ini, b.exprs[0].i).filter(y => !y.e && y.l.length < 25);
-          huecos.forEach((y, q) => { if (b.exprs[q] && y.a) { poner(y.a.u, b.exprs[q], 1, y.a.por, 1, null); if (asig[y.a.u] && asig[y.a.u].linea === b.exprs[q].l) asig[y.a.u].nota = true; } });
+          huecos.forEach((y, q) => {
+            if (!b.exprs[q] || !y.a) return;
+            const prev = asig[y.a.u];
+            // Locutorio y Frutería ya tienen su fila en la tabla: la nota de debajo es el agua, que se cobra aparte en efectivo
+            if (prev && !prev.nota) { prev.extra = val(b.exprs[q].e); prev.lineaExtra = b.exprs[q].l; return; }
+            poner(y.a.u, b.exprs[q], 1, y.a.por, 1, null); if (asig[y.a.u] && asig[y.a.u].linea === b.exprs[q].l) asig[y.a.u].nota = true;
+          });
           b.exprs.slice(huecos.length).forEach(x => cola.push(x));
           return;
         }
@@ -294,5 +305,5 @@
     return { filas, sueltas, totalDoc, lineas };
   }
 
-  g.OCR = { version: '3.9', leer, analizar, analizarHoja, importes, norm, _unidad: unidadDeLinea };
+  g.OCR = { version: '4.0', leer, analizar, analizarHoja, importes, norm, _unidad: unidadDeLinea };
 })(typeof window !== 'undefined' ? window : globalThis);
