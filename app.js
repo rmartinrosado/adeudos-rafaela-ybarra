@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v2.0';
+  const VERSION = 'v2.1';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -249,7 +249,7 @@
         return '<rect x="' + (cx - 38) + '" y="203" width="76" height="6" rx="1" fill="' + g + '.55)"/>' +
           '<rect class="v" x="' + (cx - 36) + '" y="211" width="72" height="34" rx="2" fill="' + c[0] + '" stroke="' + c[1] + '"' + (e.estado === 'falta' ? ' stroke-dasharray="3 3"' : '') + (e.estado === 'hecho' ? ' filter="url(#brillo)"' : '') + '/>' +
           '<path d="M' + cx + ' 211v34" stroke="' + (e.estado === 'hecho' ? 'rgba(19,34,58,.25)' : g + '.25)') + '"/>' +
-          '<text x="' + cx + '" y="232" text-anchor="middle" font-family="ui-serif, Georgia, serif" font-size="13" font-weight="600" fill="' + txt(e.estado) + '">' + 'Local ' + u.slice(1) + '</text>';
+          '<text x="' + cx + '" y="232" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="' + txt(e.estado) + '">' + 'Local ' + u.slice(1) + '</text>';
       });
     });
     // Plantas 1 a 3, de abajo arriba
@@ -264,7 +264,7 @@
           return '<rect class="v" x="' + (cx - 24) + '" y="' + top + '" width="48" height="35" rx="2" fill="' + c[0] + '" stroke="' + c[1] + '"' +
             (e.estado === 'falta' ? ' stroke-dasharray="3 3"' : '') + (e.estado === 'hecho' ? ' filter="url(#brillo)"' : '') + '/>' +
             '<path d="M' + cx + ' ' + top + 'v35" stroke="' + (e.estado === 'hecho' ? 'rgba(19,34,58,.22)' : g + '.22)') + '"/>' +
-            '<text x="' + cx + '" y="' + (top + 22) + '" text-anchor="middle" font-family="ui-serif, Georgia, serif" font-size="14" font-weight="600" fill="' + txt(e.estado) + '">' + f + L + '</text>' + bal;
+            '<text x="' + cx + '" y="' + (top + 22) + '" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="' + txt(e.estado) + '">' + f + L + '</text>' + bal;
         });
       });
     });
@@ -285,7 +285,7 @@
       s += '<g class="col" ' + d + '>' +
         (hb ? '<rect x="' + (cx - bw / 2) + '" y="' + (base - hb) + '" width="' + bw + '" height="' + hb + '" rx="3" fill="var(--banco)"/>' : '') +
         (he ? '<rect x="' + (cx - bw / 2) + '" y="' + (base - hb - he) + '" width="' + bw + '" height="' + he + '" rx="3" fill="var(--gold)"/>' : '') + '</g>' +
-        '<text x="' + cx + '" y="' + (base - hb - he - 7) + '" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)" font-family="ui-serif, Georgia, serif">' + eurC(x.t) + '</text>' +
+        '<text x="' + cx + '" y="' + (base - hb - he - 7) + '" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)" font-family="-apple-system, Helvetica, Arial, sans-serif">' + eurC(x.t) + '</text>' +
         '<text x="' + cx + '" y="' + (base + 17) + '" text-anchor="middle" font-size="11" fill="var(--muted)">' + partes[0].charAt(0) + partes[0].slice(1).toLowerCase() + '–' + partes[1].charAt(0) + partes[1].slice(1).toLowerCase() + '</text>' +
         '<text x="' + cx + '" y="' + (base + 31) + '" text-anchor="middle" font-size="10" fill="var(--muted)">' + partes[2] + '</text>';
     });
