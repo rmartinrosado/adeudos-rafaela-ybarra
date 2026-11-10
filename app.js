@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v2.2';
+  const VERSION = 'v2.3';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -56,7 +56,7 @@
     return {
       config: {
         nombre: 'Comunidad de Propietarios Av. de Rafaela Ybarra 5', nif: '', sufijo: '000',
-        iban: '', bic: 'BSCHESMMXXX', presidente: 'Marcelo',
+        iban: '', bic: 'BSCHESMMXXX', presidente: 'Marcelo', presidenteId: '', vicepresidente: '', vicepresidenteId: '',
         direccion: 'Av. de Rafaela Ybarra, 5', cp: '28026', localidad: 'Madrid', provincia: 'Madrid',
         concepto: 'CUOTA COMUNIDAD {PERIODO} {UNIDAD}', modoSeq: 'auto'
       },
@@ -243,17 +243,32 @@
       const d = (k++) * 65;
       return '<g class="win" data-act="editar" data-id="' + e.id + '" style="animation-delay:' + d + 'ms"><title>' + esc(u + (e.nombre ? ' — ' + e.nombre : '')) + '</title>' + inner(e) + '</g>';
     };
-    // Bajos: locales comerciales
-    ['L1', 'L2', 'L3'].forEach((u, i) => {
-      const cx = [69, 160, 251][i];
+    // Insignia de cargo (P / V) en la ventana o local del presidente y del vicepresidente
+    const insignia = (id, x, y) => {
+      const l = id && id === st.config.presidenteId ? 'P' : id && id === st.config.vicepresidenteId ? 'V' : '';
+      return l ? '<circle cx="' + x + '" cy="' + y + '" r="8" fill="#13223a" stroke="#e2c995" stroke-width="1.4"/><text x="' + x + '" y="' + (y + 4) + '" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="10" font-weight="700" fill="#e2c995">' + l + '</text>' : '';
+    };
+    // Bajos: Local 1, portal, Local 2, Local 3
+    const huecos = { L1: 53, L2: 196, L3: 267 };
+    ['L1', 'L2', 'L3'].forEach(u => {
+      const cx = huecos[u];
       s += win(u, e => {
         const c = C[e.estado];
-        return '<rect x="' + (cx - 38) + '" y="203" width="76" height="6" rx="1" fill="' + g + '.55)"/>' +
-          '<rect class="v" x="' + (cx - 36) + '" y="211" width="72" height="34" rx="2" fill="' + c[0] + '" stroke="' + c[1] + '"' + (e.estado === 'falta' ? ' stroke-dasharray="3 3"' : '') + (e.estado === 'hecho' ? ' filter="url(#brillo)"' : '') + '/>' +
-          '<path d="M' + cx + ' 211v34" stroke="' + (e.estado === 'hecho' ? 'rgba(19,34,58,.25)' : g + '.25)') + '"/>' +
-          '<text x="' + cx + '" y="232" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="' + txt(e.estado) + '">' + 'Local ' + u.slice(1) + '</text>';
+        return '<rect x="' + (cx - 33) + '" y="203" width="66" height="6" rx="1" fill="' + g + '.55)"/>' +
+          '<rect class="v" x="' + (cx - 31) + '" y="211" width="62" height="34" rx="2" fill="' + c[0] + '" stroke="' + c[1] + '"' + (e.estado === 'falta' ? ' stroke-dasharray="3 3"' : '') + (e.estado === 'hecho' ? ' filter="url(#brillo)"' : '') + '/>' +
+          '<text x="' + cx + '" y="232" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="' + txt(e.estado) + '">' + 'Local ' + u.slice(1) + '</text>' +
+          insignia(e.id, cx + 29, 212);
       });
     });
+    // Portal del edificio: al tocarlo se elige la junta
+    const px = 124, falta = !st.config.presidente || !st.config.vicepresidente;
+    s += '<g class="portal' + (falta ? ' llama' : '') + '" data-act="cargos"><title>Portal: elegir presidente y vicepresidente</title>' +
+      '<rect x="' + (px - 30) + '" y="199" width="60" height="52" fill="transparent"/>' +
+      '<rect x="' + (px - 7) + '" y="201" width="14" height="9" rx="1.5" fill="#e2c995"/><text x="' + px + '" y="208.6" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="8" font-weight="700" fill="#13223a">5</text>' +
+      '<path d="M' + (px - 19) + ' 251V224a19 11 0 0 1 38 0V251" fill="#0b1526" stroke="#d4b57e" stroke-width="1.4"/>' +
+      '<path d="M' + px + ' 214v37M' + (px - 13) + ' 226h9M' + (px + 4) + ' 226h9M' + (px - 13) + ' 238h9M' + (px + 4) + ' 238h9" stroke="' + g + '.35)"/>' +
+      '<circle class="pomo" cx="' + (px - 3.5) + '" cy="233" r="1.8" fill="#e2c995"/><circle class="pomo" cx="' + (px + 3.5) + '" cy="233" r="1.8" fill="#e2c995"/>' +
+      '</g>';
     // Plantas 1 a 3, de abajo arriba
     [1, 2, 3].forEach(f => {
       const top = 19 + (3 - f) * 59 + 9;
@@ -266,7 +281,7 @@
           return '<rect class="v" x="' + (cx - 24) + '" y="' + top + '" width="48" height="35" rx="2" fill="' + c[0] + '" stroke="' + c[1] + '"' +
             (e.estado === 'falta' ? ' stroke-dasharray="3 3"' : '') + (e.estado === 'hecho' ? ' filter="url(#brillo)"' : '') + '/>' +
             '<path d="M' + cx + ' ' + top + 'v35" stroke="' + (e.estado === 'hecho' ? 'rgba(19,34,58,.22)' : g + '.22)') + '"/>' +
-            '<text x="' + cx + '" y="' + (top + 22) + '" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="' + txt(e.estado) + '">' + f + L + '</text>' + bal;
+            '<text x="' + cx + '" y="' + (top + 22) + '" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="' + txt(e.estado) + '">' + f + L + '</text>' + bal + insignia(e.id, cx + 22, top + 2);
         });
       });
     });
@@ -309,6 +324,7 @@
       fachada(E.est) +
       '<div class="leyenda"><span><i style="background:#e2c995"></i>' + (E.rem ? 'En remesa o pagado' : 'Remesado o pagado') + '</span><span><i style="border:1px solid #d4b57e;background:rgba(212,181,126,.14)"></i>Listo</span>' +
       '<span><i style="background:#b4505c"></i>Efectivo pendiente</span><span><i style="border:1px dashed rgba(255,255,255,.4)"></i>Faltan datos</span></div>' +
+      '<div class="pista">' + ico('vecinos') + 'Toca el portal para elegir presidente y vicepresidente</div>' +
       '<div class="sum"><div><span>Banco</span><b>' + S.eur(E.banco) + '</b></div><div><span>Efectivo</span><b>' + S.eur(E.ef) + '</b></div><div><span>Total</span><b>' + S.eur(total) + '</b></div></div>' +
       '</section>' +
 
@@ -398,6 +414,34 @@
     Object.entries(lectura.valores).forEach(([id, v]) => { if (v > 0) { b.importes[id] = centAStr(v); b.excluir[id] = false; n++; } });
     guardar(); cerrar(); tab = 'remesa'; render(); window.scrollTo(0, 0);
     toast('Importes aplicados a ' + n + (n === 1 ? ' vecino' : ' vecinos'));
+  }
+
+
+  /* ---------- Junta: presidente y vicepresidente ---------- */
+  function dlgCargos() {
+    const c = st.config, ds = ordenados();
+    const campo = (k, t) => {
+      const opts = '<option value="">Sin vivienda asignada</option>' + ds.map(d => '<option value="' + d.id + '"' + (c[k + 'Id'] === d.id ? ' selected' : '') + '>' +
+        esc(etiqueta(d) + (d.nombre ? ', ' + d.nombre : '')) + '</option>').join('');
+      return '<label>' + t + '</label><select data-cargo="' + k + '">' + opts + '</select>' +
+        '<input id="nom_' + k + '" style="margin-top:8px" value="' + esc(c[k] || '') + '" placeholder="Nombre que se muestra" autocomplete="off">';
+    };
+    abrir('<div class="card"><h2>' + ico('vecinos') + 'Junta de la comunidad</h2>' +
+      '<p class="muted" style="margin-top:0">Elige la vivienda o el local de cada cargo y escribe el nombre como quieras que aparezca en la cabecera.</p>' +
+      campo('presidente', 'Presidente') + campo('vicepresidente', 'Vicepresidente') +
+      '<div class="btns"><button class="btn oro" data-act="guardarCargos">' + ico('check') + 'Guardar junta</button><button class="btn sec" data-act="cerrar">Cancelar</button></div></div>');
+  }
+  function guardarCargos() {
+    ['presidente', 'vicepresidente'].forEach(k => {
+      st.config[k + 'Id'] = document.querySelector('[data-cargo="' + k + '"]').value;
+      st.config[k] = $('#nom_' + k).value.trim();
+    });
+    guardar(); cerrar(); render(); toast('Junta guardada');
+  }
+  function cabeceraJunta() {
+    const c = st.config, uni = id => { const d = st.deudores.find(x => x.id === id); return d ? ' <i>' + esc(corto(d)) + '</i>' : ''; };
+    const item = (t, k) => '<span>' + t + ' <b>' + (c[k] ? esc(c[k]) : 'sin elegir') + '</b>' + (c[k] ? uni(c[k + 'Id']) : '') + '</span>';
+    return item('Presidente', 'presidente') + item('Vicepresidente', 'vicepresidente');
   }
 
   /* ---------- Pestaña Remesa ---------- */
@@ -601,7 +645,7 @@
       f('nombre', 'Nombre de la comunidad') +
       f('nif', 'NIF de la comunidad', ' autocapitalize="characters" placeholder="H12345678"') +
       (nifR ? '<div class="muted" style="color:' + (nifR.ok ? 'var(--ok)' : 'var(--err)') + '">' + (nifR.ok ? 'NIF correcto' : 'NIF no válido') + '</div>' : '') +
-      f('presidente', 'Presidente') +
+      f('presidente', 'Presidente') + f('vicepresidente', 'Vicepresidente') +
       f('direccion', 'Dirección') +
       '<div class="row"><div>' + f('cp', 'C. postal', ' inputmode="numeric"') + '</div><div>' + f('localidad', 'Localidad') + '</div></div>' +
       f('provincia', 'Provincia') + '</div>' +
@@ -643,6 +687,7 @@
     document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
     $('#ver').textContent = VERSION;
     $('#sub').textContent = st.config.direccion + ', ' + st.config.cp + ' ' + st.config.localidad;
+    $('#junta').innerHTML = cabeceraJunta();
   }
 
   $('#nav').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (!b) return; tab = b.dataset.tab; render(); window.scrollTo(0, 0); });
@@ -653,6 +698,8 @@
     if (a === 'cerrar') cerrar();
     else if (a === 'foto') { const i = $('#fotoImp'); i.value = ''; i.click(); }
     else if (a === 'ocrAplicar') aplicarLectura();
+    else if (a === 'cargos') dlgCargos();
+    else if (a === 'guardarCargos') guardarCargos();
     else if (a === 'ir') { cerrar(); tab = el.dataset.tab; render(); window.scrollTo(0, 0); }
     else if (a === 'efectivoActual') {
       const r = st.remesas.find(x => x.nombre === nombreActual());
@@ -702,6 +749,11 @@
   document.addEventListener('change', e => {
     const t = e.target;
     if (t.id === 'fotoImp' && t.files[0]) { procesarFoto(t.files[0]); return; }
+    if (t.dataset.cargo) {
+      const d = st.deudores.find(x => x.id === t.value), inp = $('#nom_' + t.dataset.cargo);
+      if (d && d.nombre && inp) inp.value = d.nombre;
+      return;
+    }
     if (t.dataset.asig !== undefined && t.value) {
       const x = lectura.res.sueltas[+t.dataset.asig]; lectura.valores[t.value] = x.importe;
       const inp = document.querySelector('[data-ocr="' + t.value + '"]'); if (inp) inp.value = centAStr(x.importe);
