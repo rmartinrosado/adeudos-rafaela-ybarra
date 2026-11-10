@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v4.1';
+  const VERSION = 'v4.2';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -436,7 +436,7 @@
     const nOk = E.ds.filter(d => esEf(d) ? !!d.nombre : d.nombre && S.ibanValido(d.iban)).length;
     return '' +
       '<section class="hero"><div class="htop"><div><div class="per">Remesa ' + esc(E.nombre) + '</div>' +
-      '<h2>' + m1 + ' y ' + m2.toLowerCase() + '</h2></div>' +
+      '<h2>' + m1 + ' y ' + m2 + '</h2></div>' +
       '<div class="cuenta">' + cuenta + '</div></div><div class="cuando">' + cuando + '</div>' +
       fachada(E.est) +
       '<div class="leyenda"><span><i style="background:#e2c995"></i>' + (E.rem ? 'En remesa o pagado' : 'Remesado o pagado') + '</span><span><i style="border:1px solid #d4b57e;background:rgba(212,181,126,.14)"></i>Listo</span>' +
