@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v2.4';
+  const VERSION = 'v2.5';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -50,7 +50,7 @@
   function defaults() {
     const pisos = ['1A', '1B', '1C', '2A', '2B', '2C', '3A', '3B', '3C'];
     const d = pisos.map((p, i) => deudorBase(p, 'piso', '', i));
-    d.push(deudorBase('L1', 'local', 'Deportes Gálvez', 9));
+    d.push(deudorBase('L1', 'local', 'DEPORTES GÁLVEZ', 9));
     d.push(deudorBase('L2', 'local', 'Locutorio', 10));
     d.push(deudorBase('L3', 'local', 'Alimentación', 11));
     return {
@@ -67,11 +67,20 @@
   try { st = JSON.parse(localStorage.getItem(KEY)) || defaults(); } catch (e) { st = defaults(); }
   const dflt = defaults();
   st.config = Object.assign({}, dflt.config, st.config);
-  migrar();
+  migrar(); guardar();
   function migrar() {
     // v1.1: forma de pago por deudor (los locales pagan en efectivo)
     st.deudores.forEach(d => { if (!d.pago) d.pago = d.tipo === 'local' ? 'efectivo' : 'domiciliado'; });
     st.remesas.forEach(r => { if (!r.efectivo) r.efectivo = []; });
+    // v2.5: Local 1 = DEPORTES GÁLVEZ (se añade si no existe)
+    if (!st.config.migL1) {
+      let l1 = st.deudores.find(d => d.unidad === 'L1');
+      if (!l1) {
+        l1 = deudorBase('L1', 'local', 'DEPORTES GÁLVEZ', 9);
+        st.deudores.push(l1);
+      } else if (!l1.nombre || S.limpiar(l1.nombre).toUpperCase() === 'DEPORTES GALVEZ') l1.nombre = 'DEPORTES GÁLVEZ';
+      st.config.migL1 = true;
+    }
   }
   function guardar() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { toast('No se pudo guardar en el dispositivo'); } }
 
@@ -254,7 +263,9 @@
       const cx = huecos[u];
       s += win(u, e => {
         const c = C[e.estado];
-        return '<rect x="' + (cx - 33) + '" y="203" width="66" height="6" rx="1" fill="' + g + '.55)"/>' +
+        const rot = String(e.nombre || '').trim().toLocaleUpperCase('es-ES');
+        return '<rect x="' + (cx - 33) + '" y="200" width="66" height="9" rx="1.5" fill="#d4b57e"/>' +
+          (rot ? '<text x="' + cx + '" y="206.9" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="' + Math.min(6.6, 60 / (rot.length * 0.62)).toFixed(2) + '" font-weight="700" letter-spacing=".2" fill="#13223a">' + esc(rot) + '</text>' : '') +
           '<rect class="v" x="' + (cx - 31) + '" y="211" width="62" height="34" rx="2" fill="' + c[0] + '" stroke="' + c[1] + '"' + (e.estado === 'falta' ? ' stroke-dasharray="3 3"' : '') + (e.estado === 'hecho' ? ' filter="url(#brillo)"' : '') + '/>' +
           '<text x="' + cx + '" y="232" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="' + txt(e.estado) + '">' + 'Local ' + u.slice(1) + '</text>' +
           insignia(e.id, cx + 29, 212);
