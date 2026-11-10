@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v2.6';
+  const VERSION = 'v2.7';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -67,6 +67,9 @@
   try { st = JSON.parse(localStorage.getItem(KEY)) || defaults(); } catch (e) { st = defaults(); }
   const dflt = defaults();
   st.config = Object.assign({}, dflt.config, st.config);
+  const BASE = ['1A', '1B', '1C', '2A', '2B', '2C', '3A', '3B', '3C'].map(u => [u, 'piso', ''])
+    .concat([['L1', 'local', 'DEPORTES GÁLVEZ'], ['L2', 'local', 'LOCUTORIO'], ['L3', 'local', 'ALIMENTACIÓN']]);
+  const esBase = d => BASE.some(b => b[0] === d.unidad);
   migrar(); guardar();
   // Código de unidad normalizado: «Local 1», «L-1», «1» → L1 · «1º A», «1-A», «piso 1a» → 1A
   function normUnidad(tipo, raw) {
@@ -78,6 +81,7 @@
   }
   function migrar() {
     // v2.6: repara códigos de unidad mal guardados (p. ej. «LOCAL1» en vez de «L1»)
+    st.deudores.forEach(d => { if (d.tipo !== 'local' && /^L(OCAL)?\d+$/.test(S.limpiar(d.unidad).toUpperCase().replace(/[^A-Z0-9]/g, ''))) { d.tipo = 'local'; d.pago = 'efectivo'; } });
     st.deudores.forEach(d => {
       const u = normUnidad(d.tipo, d.unidad);
       if (u && u !== d.unidad && !st.deudores.some(x => x !== d && x.unidad === u)) d.unidad = u;
@@ -85,22 +89,13 @@
     // v1.1: forma de pago por deudor (los locales pagan en efectivo)
     st.deudores.forEach(d => { if (!d.pago) d.pago = d.tipo === 'local' ? 'efectivo' : 'domiciliado'; });
     st.remesas.forEach(r => { if (!r.efectivo) r.efectivo = []; });
-    // v2.5: Local 1 = DEPORTES GÁLVEZ (se añade si no existe)
-    if (!st.config.migL1) {
-      let l1 = st.deudores.find(d => d.unidad === 'L1');
-      if (!l1) {
-        l1 = deudorBase('L1', 'local', 'DEPORTES GÁLVEZ', 9);
-        st.deudores.push(l1);
-      } else if (!l1.nombre || S.limpiar(l1.nombre).toUpperCase() === 'DEPORTES GALVEZ') l1.nombre = 'DEPORTES GÁLVEZ';
-      st.config.migL1 = true;
-    }
-    // v2.6: Local 2 = LOCUTORIO (se añade si no existe)
-    if (!st.config.migL2) {
-      let l2 = st.deudores.find(d => d.unidad === 'L2');
-      if (!l2) st.deudores.push(deudorBase('L2', 'local', 'LOCUTORIO', 10));
-      else if (!l2.nombre || S.limpiar(l2.nombre).toUpperCase() === 'LOCUTORIO') l2.nombre = 'LOCUTORIO';
-      st.config.migL2 = true;
-    }
+    // v2.7: el edificio siempre tiene sus 9 pisos y 3 locales (se recrean si faltan)
+    BASE.forEach(([u, tipo, nom], i) => {
+      let d = st.deudores.find(x => x.unidad === u);
+      if (!d) { d = deudorBase(u, tipo, nom, i); st.deudores.push(d); }
+      if (tipo === 'local' && nom && (!d.nombre || S.limpiar(d.nombre).toUpperCase() === S.limpiar(nom).toUpperCase())) d.nombre = nom;
+      if (d.tipo !== tipo) d.tipo = tipo;
+    });
   }
   function guardar() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { toast('No se pudo guardar en el dispositivo'); } }
 
@@ -610,7 +605,8 @@
       '<label class="check"><input type="checkbox" name="previos"' + (d.previos ? ' checked' : '') + '><span>Ya tuvo cobros domiciliados antes (usar RCUR)</span></label></div>' +
       '<label class="check"><input type="checkbox" name="activo"' + (d.activo ? ' checked' : '') + '><span>Activo en las remesas</span></label>' +
       '<div class="btns"><button type="submit" class="btn">Guardar</button><button type="button" class="btn sec" data-act="cerrar">Cancelar</button></div>' +
-      (nuevo ? '' : '<div class="btns"><button type="button" class="btn danger" data-act="borrarDeudor" data-id="' + d.id + '">Eliminar deudor</button></div>') +
+      (nuevo ? '' : esBase(d) ? '<p class="muted">Para que no entre en las remesas, desmarca «Activo en las remesas»: seguirá en el dibujo, atenuado.</p>' :
+        '<div class="btns"><button type="button" class="btn danger" data-act="borrarDeudor" data-id="' + d.id + '">Eliminar</button></div>') +
       '</form></div>');
     revisarIban();
   }

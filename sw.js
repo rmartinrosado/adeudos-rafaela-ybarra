@@ -1,4 +1,4 @@
-const CACHE = 'adeudos-ry5-v2.6';
+const CACHE = 'adeudos-ry5-v2.7';
 const FILES = ['./', 'index.html', 'app.js', 'sepa.js', 'ocr.js', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener('activate', e => {
