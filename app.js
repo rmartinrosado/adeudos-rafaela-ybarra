@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v4.0';
+  const VERSION = 'v4.1';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -60,7 +60,7 @@
         direccion: 'Av. de Rafaela Ybarra, 5', cp: '28026', localidad: 'Madrid', provincia: 'Madrid',
         concepto: 'CUOTA COMUNIDAD {PERIODO} {UNIDAD}', modoSeq: 'auto'
       },
-      deudores: d, remesas: [], borrador: null
+      deudores: d, remesas: [], borradores: {}, periodo: null
     };
   }
   let st;
@@ -120,6 +120,14 @@
       if (d.tipo !== tipo) d.tipo = tipo;
     });
     st.config.migRot31 = true;
+    // v4.1: un borrador por bimestre. Los importes que había cargados son los de SEP-OCT-2026 (listado del banco)
+    if (st.borrador) {
+      const b = st.borrador, sep = st.remesas.find(r => r.nombre === 'SEP-OCT-2026');
+      let n = S.nombreRemesa(b.idx || 0, b.anio || new Date().getFullYear());
+      if (sep) { n = sep.nombre; Object.assign(b, { idx: 4, anio: 2026, fechaGen: sep.fechaGen, mesCobro: sep.fechaCobro.slice(0, 7) }); st.periodo = { idx: 4, anio: 2026 }; }
+      else st.periodo = { idx: b.idx, anio: b.anio };
+      st.borradores = st.borradores || {}; st.borradores[n] = b; delete st.borrador;
+    }
     // v4.0: Locutorio y Frutería pagan la cuota por banco y el agua en efectivo; Deportes Gálvez todo en efectivo
     if (!st.config.migAgua) {
       st.deudores.forEach(d => {
@@ -144,20 +152,35 @@
 
   /* ---------- Borrador de remesa ---------- */
   function mesIso(y, m) { return y + '-' + String(m + 1).padStart(2, '0'); }
-  function borrador() {
-    if (!st.borrador) {
-      const hoy = S.hoyIso(), p = S.periodoDeFecha(hoy);
-      st.borrador = { fechaGen: hoy, idx: p.idx, anio: p.anio, mesCobro: mesIso(p.anio, p.idx * 2),
-        importes: {}, excluir: {}, formatos: { core: true, c1914: true, b2b: true, c1944: true } };
-      const ult = ultimaRemesa();
-      if (ult) cargarImportes(ult);
-    }
-    return st.borrador;
+  // Cada bimestre tiene sus propios datos de preparación (fecha, importes, exclusiones, foto leída)
+  function periodoActual() {
+    if (!st.periodo) { const p = S.periodoDeFecha(S.hoyIso()); st.periodo = { idx: p.idx, anio: p.anio }; }
+    return st.periodo;
   }
-  function cargarImportes(r) {
-    const imp = st.borrador.importes;
-    if (!st.borrador.importesAgua) st.borrador.importesAgua = {};
-    r.items.concat(r.efectivo || []).forEach(i => { if (i.importe > 0) (i.concepto === 'Agua' ? st.borrador.importesAgua : imp)[i.deudorId] = centAStr(i.importe); });
+  function borradorDe(idx, anio) {
+    if (!st.borradores) st.borradores = {};
+    const n = S.nombreRemesa(idx, anio);
+    if (!st.borradores[n]) {
+      const rem = st.remesas.find(r => r.nombre === n);
+      const b = { idx, anio, fechaGen: rem ? rem.fechaGen : S.hoyIso(), mesCobro: rem ? rem.fechaCobro.slice(0, 7) : primerCobro(idx, anio),
+        importes: {}, importesAgua: {}, excluir: {}, formatos: { core: true, c1914: true, b2b: true, c1944: true } };
+      st.borradores[n] = b;
+      // Si el bimestre ya tiene remesa (generada o importada del banco), se ven sus importes; si no, empieza vacío
+      if (rem) cargarImportes(rem, b);
+    }
+    return st.borradores[n];
+  }
+  function borrador() { const p = periodoActual(); return borradorDe(p.idx, p.anio); }
+  // Primer día 10 del bimestre que aún no ha pasado (si ya pasaron los dos, el del primer mes)
+  function primerCobro(idx, anio) {
+    const hoy = S.hoyIso();
+    for (let k = 0; k < 2; k++) { const m = mesIso(anio, idx * 2 + k); if (m + '-10' > hoy) return m; }
+    return mesIso(anio, idx * 2);
+  }
+  function cargarImportes(r, b) {
+    b = b || borrador();
+    if (!b.importesAgua) b.importesAgua = {};
+    r.items.concat(r.efectivo || []).forEach(i => { if (i.importe > 0) (i.concepto === 'Agua' ? b.importesAgua : b.importes)[i.deudorId] = centAStr(i.importe); });
   }
   function ultimaRemesa() { return st.remesas.slice().sort((a, b) => b.fechaCobro.localeCompare(a.fechaCobro))[0]; }
   function nombreActual() { const b = borrador(); return S.nombreRemesa(b.idx, b.anio); }
@@ -694,7 +717,7 @@
     const total = ords.reduce((s, o) => s + o.importe, 0), sinAsig = P.asig.filter(x => !x).length, dup = Object.values(usados).some(v => v > 1);
     abrir('<div class="card"><h2>' + ico('banco' in I ? 'banco' : 'panel') + 'Listado del banco<span class="h2r">' + esc(P.remesa.nombre) + '</span></h2>' +
       '<div class="muted">' + ords.length + ' órdenes, ' + S.eur(total) + ', cobro el ' + fmtFecha(P.remesa.fechaCobro) + '</div>' +
-      '<div class="alert ok">' + ico('info') + '<span>Indica a qué piso o local corresponde cada deudor. Se guardará su titular y su cuenta, la remesa quedará en el Historial con el PDF, y sus importes se copiarán a la remesa en preparación.</span></div>' +
+      '<div class="alert ok">' + ico('info') + '<span>Indica a qué piso o local corresponde cada deudor. Se guardará su titular y su cuenta, la remesa quedará en el Historial con el PDF, y sus importes quedarán en ese bimestre. Los demás bimestres no cambian.</span></div>' +
       ords.map((o, i) => '<div class="item" style="flex-wrap:wrap"><div class="grow" style="min-width:60%"><div class="name">' + esc(o.nombre) + '</div><div class="muted">Cuenta ···' + esc(o.iban.slice(-4)) + '</div></div>' +
         '<b style="font-size:16px">' + S.eur(o.importe) + '</b>' +
         '<select data-paq="' + i + '" style="width:100%;margin-top:6px' + (P.asig[i] && usados[P.asig[i]] > 1 ? ';border-color:var(--err)' : '') + '">' + opts(P.asig[i]) + '</select></div>').join('') +
@@ -715,7 +738,10 @@
     const P = paquete, R = P.remesa, c = st.config;
     if (st.remesas.some(x => x.nombre === R.nombre) && !confirm('Ya hay una remesa ' + R.nombre + ' en el Historial. ¿Sustituirla por la del listado?')) return;
     if (P.config && $('#paqCfg') && $('#paqCfg').checked) ['nombre', 'nif', 'idAcreedor', 'contrato'].forEach(k => { if (P.config[k]) c[k] = P.config[k]; });
-    const items = [], b = borrador();
+    const per = S.BIMESTRES.indexOf(R.nombre.slice(0, 7)), anioR = parseInt(R.nombre.slice(-4), 10);
+    if (st.borradores) delete st.borradores[R.nombre];
+    const items = [], b = per >= 0 ? borradorDe(per, anioR) : borrador();
+    if (per >= 0) { b.fechaGen = R.fechaGen; b.mesCobro = R.fechaCobro.slice(0, 7); }
     R.ordenes.forEach((o, i) => {
       const d = st.deudores.find(x => x.id === P.asig[i]);
       d.nombre = o.nombre; d.iban = S.normIban(o.iban); d.bic = S.bicDeIban(o.iban) || d.bic || '';
@@ -728,7 +754,7 @@
     st.remesas.push({ id: uid(), generado: new Date().toISOString(), importado: true, formatos: { core: true, c1914: true, b2b: false, c1944: false },
       nombre: R.nombre, fechaGen: R.fechaGen, fechaCobro: R.fechaCobro,
       efectivo: (R.efectivo || []).map(e => { const d = st.deudores.find(x => x.unidad === e.unidad); if (!d) return null;
-        const agua = e.concepto === 'Agua', dest = agua ? aguaDe() : b.importes;
+        const agua = e.concepto === 'Agua'; if (!b.importesAgua) b.importesAgua = {}; const dest = agua ? b.importesAgua : b.importes;
         if (agua) d.agua = true;
         if (!S.parseImporte(dest[d.id])) dest[d.id] = centAStr(e.importe);
         return { deudorId: d.id, unidad: d.unidad, nombre: nomVis(d) || etiqueta(d), etiqueta: etiqueta(d) + (agua ? ' (agua)' : ''), concepto: e.concepto || '', importe: e.importe, cobrado: !!e.cobrado, fechaPago: e.cobrado ? R.fechaCobro : '' }; }).filter(Boolean),
@@ -1195,11 +1221,13 @@
     if (t.dataset.b) {
       const b = borrador(), k = t.dataset.b;
       if (k === 'fechaGen') {
-        b.fechaGen = t.value;
-        if (t.value) { const p = S.periodoDeFecha(t.value); if (p.idx !== b.idx || p.anio !== b.anio) { b.idx = p.idx; b.anio = p.anio; b.mesCobro = mesIso(p.anio, p.idx * 2); } }
+        const p = t.value ? S.periodoDeFecha(t.value) : null;
+        if (p && (p.idx !== b.idx || p.anio !== b.anio)) { st.periodo = { idx: p.idx, anio: p.anio }; lectura = null; }
+        borrador().fechaGen = t.value;
       } else if (k === 'idx' || k === 'anio') {
-        b[k] = parseInt(t.value, 10) || (k === 'anio' ? new Date().getFullYear() : 0);
-        b.mesCobro = mesIso(b.anio, b.idx * 2);
+        const v = parseInt(t.value, 10), p = { idx: b.idx, anio: b.anio };
+        p[k] = isNaN(v) ? (k === 'anio' ? new Date().getFullYear() : 0) : v;
+        st.periodo = p; lectura = null;
       } else b[k] = t.value;
       guardar(); render();
     } else if (t.dataset.fmt) { borrador().formatos[t.dataset.fmt] = t.checked; guardar(); }
