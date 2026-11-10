@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v3.2';
+  const VERSION = 'v3.3';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -56,7 +56,7 @@
     return {
       config: {
         nombre: 'Comunidad de Propietarios Av. de Rafaela Ybarra 5', nif: '', sufijo: '000',
-        iban: '', bic: 'BSCHESMMXXX', presidente: 'Marcelo', presidenteId: '', vicepresidente: '', vicepresidenteId: '',
+        iban: '', bic: 'BSCHESMMXXX', idAcreedor: '', contrato: '', presidente: 'Marcelo', presidenteId: '', vicepresidente: '', vicepresidenteId: '',
         direccion: 'Av. de Rafaela Ybarra, 5', cp: '28026', localidad: 'Madrid', provincia: 'Madrid',
         concepto: 'CUOTA COMUNIDAD {PERIODO} {UNIDAD}', modoSeq: 'auto'
       },
@@ -129,7 +129,8 @@
   const esEf = d => d.pago === 'efectivo';
   const nomVis = d => d.tipo === 'local' ? (d.rotulo || d.nombre || '') : (d.nombre || '');
   const centAStr = c => (c / 100).toFixed(2).replace('.', ',');
-  function idAcr() { return S.idAcreedor(st.config.nif, st.config.sufijo); }
+  function idAcrCalc() { return S.idAcreedor(st.config.nif, st.config.sufijo); }
+  function idAcr() { const m = String(st.config.idAcreedor || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); return m || idAcrCalc(); }
 
   /* ---------- Borrador de remesa ---------- */
   function mesIso(y, m) { return y + '-' + String(m + 1).padStart(2, '0'); }
@@ -241,6 +242,11 @@
     const url = URL.createObjectURL(new Blob([f.content], { type: f.type }));
     const a = document.createElement('a'); a.href = url; a.download = f.name; document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
+  }
+  function compartirBlob(blob, name) {
+    const file = new File([blob], name, { type: blob.type });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) navigator.share({ files: [file], title: name }).catch(() => {});
+    else { const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500); }
   }
   function compartir(lista) {
     const files = lista.map(aFile);
@@ -426,6 +432,7 @@
   async function procesarFoto(file) {
     if (lectura && lectura.foto) URL.revokeObjectURL(lectura.foto);
     const foto = URL.createObjectURL(file);
+    const docId = await guardarDoc(nombreActual(), file, 'Foto ' + new Date().toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' }), 'foto');
     abrir('<div class="card"><h2>' + ico('escanear') + 'Leyendo la foto</h2><img class="foto escaneando" src="' + foto + '" alt="">' +
       '<div class="prog"><i id="ocrBar"></i></div><div class="muted" id="ocrTxt">Preparando la foto</div>' +
       '<p class="muted">La lectura se hace en este iPhone. La primera vez descarga el lector de texto (unos 10 MB).</p></div>');
@@ -434,7 +441,7 @@
       const res = window.OCR.analizar(texto, st.deudores.filter(d => d.activo));
       const valores = {};
       res.filas.forEach(f => { valores[f.deudorId] = f.importe; });
-      lectura = { res, foto, valores, texto };
+      lectura = { res, foto, valores, texto, docId };
       revisionFoto();
     } catch (e) {
       const sinRed = /conexi|network|fetch|load/i.test(e.message || '');
@@ -479,6 +486,7 @@
   function aplicarLectura() {
     const b = borrador(); let n = 0;
     Object.entries(lectura.valores).forEach(([id, v]) => { if (v > 0) { b.importes[id] = centAStr(v); b.excluir[id] = false; n++; } });
+    b.lectura = { fecha: new Date().toISOString(), valores: Object.assign({}, lectura.valores), totalDoc: lectura.res.totalDoc, docId: lectura.docId };
     guardar(); cerrar(); tab = 'remesa'; render(); window.scrollTo(0, 0);
     toast('Importes aplicados a ' + n + (n === 1 ? ' vecino' : ' vecinos'));
   }
@@ -509,6 +517,141 @@
     const c = st.config, uni = id => { const d = st.deudores.find(x => x.id === id); return d ? ' <i>' + esc(corto(d)) + '</i>' : ''; };
     const item = (t, k) => '<span>' + t + ' <b>' + (c[k] ? esc(c[k]) : 'sin elegir') + '</b>' + (c[k] ? uni(c[k + 'Id']) : '') + '</span>';
     return item('Presidente', 'presidente') + item('Vicepresidente', 'vicepresidente');
+  }
+
+
+  /* ---------- Documentos (PDF y fotos) guardados en el iPhone ---------- */
+  const DB = (() => {
+    let p = null;
+    const abrirDB = () => p || (p = new Promise((ok, ko) => {
+      const r = indexedDB.open('adeudosRY5_docs', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('docs', { keyPath: 'id' });
+      r.onsuccess = () => ok(r.result); r.onerror = () => ko(r.error);
+    }));
+    const tx = (modo, fn) => abrirDB().then(db => new Promise((ok, ko) => {
+      const t = db.transaction('docs', modo), st = t.objectStore('docs'), q = fn(st);
+      t.oncomplete = () => ok(q && q.result); t.onerror = () => ko(t.error);
+    }));
+    return { put: d => tx('readwrite', s => s.put(d)), all: () => tx('readonly', s => s.getAll()), del: id => tx('readwrite', s => s.delete(id)) };
+  })();
+  let docIdx = {};
+  async function refrescarDocs() {
+    try { const all = await DB.all(); docIdx = {}; all.forEach(d => { docIdx[d.remesa] = (docIdx[d.remesa] || 0) + 1; }); } catch (e) {}
+  }
+  async function guardarDoc(remesa, blob, nombre, tipo, preview) {
+    const d = { id: uid(), remesa, tipo, nombre, mime: blob.type || (tipo === 'pdf' ? 'application/pdf' : 'image/jpeg'), fecha: new Date().toISOString(), blob, preview: preview || null };
+    try { await DB.put(d); await refrescarDocs(); return d.id; } catch (e) { toast('No se pudo guardar el documento'); return null; }
+  }
+  let docDestino = null, docsAbiertos = [];
+  async function dlgDocs(remesa) {
+    const all = (await DB.all().catch(() => [])).filter(d => d.remesa === remesa).sort((a, b) => b.fecha.localeCompare(a.fecha));
+    docsAbiertos.forEach(d => d.url && URL.revokeObjectURL(d.url));
+    docsAbiertos = all.map(d => Object.assign({}, d, { url: URL.createObjectURL(d.blob), purl: d.preview ? URL.createObjectURL(d.preview) : null }));
+    abrir('<div class="card"><h2>' + ico('fichero') + 'Documentos<span class="h2r">' + esc(remesa) + '</span></h2>' +
+      (docsAbiertos.length ? docsAbiertos.map((d, i) =>
+        '<div class="file">' + (d.tipo === 'foto' ? '<img class="mini" src="' + d.url + '" alt="">' :
+          '<div class="fico">' + ico('fichero') + '<b>' + (d.tipo === 'pdf' ? 'PDF' : 'DOC') + '</b></div>') +
+        '<div class="grow"><div class="name" style="font-size:15px">' + esc(d.nombre) + '</div><div class="muted">' + (d.tipo === 'foto' ? 'Foto' : 'Listado') + ', ' + fmtFecha(d.fecha.slice(0, 10)) + '</div></div>' +
+        '<button class="btn sec sm" data-act="docVer" data-i="' + i + '" aria-label="Ver">' + ico('escanear') + '</button>' +
+        '<button class="btn sec sm" data-act="docBajar" data-i="' + i + '" aria-label="Descargar">' + ico('bajar') + '</button>' +
+        '<button class="btn danger sm" data-act="docBorrar" data-i="' + i + '" aria-label="Borrar">×</button></div>').join('')
+        : '<div class="empty">' + ico('fichero') + 'Aún no hay documentos de esta remesa.</div>') +
+      '<div class="btns"><button class="btn oro" data-act="docAnadir" data-rem="' + esc(remesa) + '">' + ico('mas') + 'Añadir PDF o foto</button><button class="btn sec" data-act="cerrar">Cerrar</button></div>' +
+      '<p class="muted">Se guardan solo en este iPhone. No van incluidos en la copia de seguridad.</p></div>');
+  }
+  function verDoc(d) {
+    const img = u => '<img src="' + u + '" alt="" style="width:100%;border-radius:12px;border:1px solid var(--line);background:#fff">';
+    const cuerpo = d.tipo === 'foto' || /^image\//.test(d.mime) ? img(d.url) : d.purl ? img(d.purl)
+      : '<iframe src="' + d.url + '#view=FitH" title="' + esc(d.nombre) + '" style="width:100%;height:62vh;border:1px solid var(--line);border-radius:12px;background:#fff"></iframe>';
+    abrir('<div class="card"><h2>' + ico('fichero') + esc(d.nombre) + '</h2>' + cuerpo +
+      '<div class="btns"><button class="btn oro" data-act="docBajar" data-i="' + docsAbiertos.indexOf(d) + '">' + ico('compartir') + 'Abrir</button><button class="btn sec" data-act="docVolver" data-rem="' + esc(d.remesa) + '">Volver</button></div></div>');
+  }
+
+  /* ---------- Importar listado del banco (remesa ya cobrada) ---------- */
+  let paquete = null;
+  const claveN = x => S.limpiar(x || '').toUpperCase().replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
+  function sugerir(o) {
+    const n = claveN(o.nombre), toks = n.split(' ').filter(t => t.length >= 3);
+    let best = null;
+    st.deudores.forEach(d => {
+      let sc = 0;
+      if (d.iban && S.normIban(d.iban) === S.normIban(o.iban)) sc = 100;
+      [d.nombre, d.rotulo].concat(d.id === st.config.presidenteId ? [st.config.presidente] : []).concat(d.id === st.config.vicepresidenteId ? [st.config.vicepresidente] : [])
+        .filter(Boolean).forEach(x => {
+          const k = claveN(x); if (!k) return;
+          if (k === n) sc = Math.max(sc, 90);
+          const kt = k.split(' '), hits = toks.filter(t => kt.includes(t)).length;
+          if (hits >= 2) sc = Math.max(sc, 60 + hits);
+          else if (hits === 1 && kt.length === 1) sc = Math.max(sc, 30);
+        });
+      if (sc && (!best || sc > best.sc)) best = { sc, id: d.id };
+    });
+    return best ? best.id : '';
+  }
+  function dlgPaquete() {
+    const P = paquete, ords = P.remesa.ordenes, ds = ordenados();
+    const opts = sel => '<option value="">Elegir piso o local…</option>' + ds.map(d => '<option value="' + d.id + '"' + (sel === d.id ? ' selected' : '') + '>' +
+      esc(etiqueta(d) + (nomVis(d) ? ', ' + nomVis(d) : '')) + '</option>').join('');
+    const usados = {}; P.asig.forEach(id => { if (id) usados[id] = (usados[id] || 0) + 1; });
+    const total = ords.reduce((s, o) => s + o.importe, 0), sinAsig = P.asig.filter(x => !x).length, dup = Object.values(usados).some(v => v > 1);
+    abrir('<div class="card"><h2>' + ico('banco' in I ? 'banco' : 'panel') + 'Listado del banco<span class="h2r">' + esc(P.remesa.nombre) + '</span></h2>' +
+      '<div class="muted">' + ords.length + ' órdenes, ' + S.eur(total) + ', cobro el ' + fmtFecha(P.remesa.fechaCobro) + '</div>' +
+      '<div class="alert ok">' + ico('info') + '<span>Indica a qué piso o local corresponde cada deudor. Se guardará su titular y su cuenta, la remesa quedará en el Historial con el PDF, y sus importes se copiarán a la remesa en preparación.</span></div>' +
+      ords.map((o, i) => '<div class="item" style="flex-wrap:wrap"><div class="grow" style="min-width:60%"><div class="name">' + esc(o.nombre) + '</div><div class="muted">Cuenta ···' + esc(o.iban.slice(-4)) + '</div></div>' +
+        '<b style="font-size:16px">' + S.eur(o.importe) + '</b>' +
+        '<select data-paq="' + i + '" style="width:100%;margin-top:6px' + (P.asig[i] && usados[P.asig[i]] > 1 ? ';border-color:var(--err)' : '') + '">' + opts(P.asig[i]) + '</select></div>').join('') +
+      (P.config ? '<label class="check" style="border-top:1px solid var(--line);margin-top:6px"><input type="checkbox" id="paqCfg" checked><span>Guardar los datos de la comunidad del listado<br><span class="muted">Emisor ' + esc(P.config.nombre || '') + ', NIF ' + esc(P.config.nif || '') + ', Id Acreedor ' + esc(P.config.idAcreedor || '') + '</span></span></label>' : '') +
+      (dup ? '<div class="alert err">' + ico('aviso') + '<span>Hay pisos o locales asignados a más de un deudor.</span></div>' : '') +
+      (sinAsig ? '<div class="alert warn">' + ico('aviso') + '<span>Faltan ' + sinAsig + ' por asignar.</span></div>' : '') +
+      '<div class="btns"><button class="btn oro" data-act="paqAplicar"' + (sinAsig || dup ? ' disabled style="opacity:.5"' : '') + '>' + ico('check') + 'Importar</button><button class="btn sec" data-act="cerrar">Cancelar</button></div></div>');
+  }
+  function itemDe(d, nombreRem, importe) {
+    const c = st.config, lab = etiqueta(d);
+    return { deudorId: d.id, unidad: d.unidad, ref: nombreRem + '-' + corto(d), mandato: d.mandato, fechaMandato: d.fechaMandato,
+      seq: 'RCUR', importe, nombre: d.nombre, nif: d.nif, org: d.tipo === 'local' && /^[A-HJ-NP-SUVW]/i.test(d.nif || ''),
+      iban: S.normIban(d.iban), bic: (d.bic || S.bicDeIban(d.iban) || '').toUpperCase(),
+      concepto: (c.concepto || '').replace('{PERIODO}', nombreRem).replace('{UNIDAD}', lab),
+      d1: c.direccion + ' ' + lab, d2: c.cp + ' ' + c.localidad, d3: c.provincia };
+  }
+  async function aplicarPaquete() {
+    const P = paquete, R = P.remesa, c = st.config;
+    if (st.remesas.some(x => x.nombre === R.nombre) && !confirm('Ya hay una remesa ' + R.nombre + ' en el Historial. ¿Sustituirla por la del listado?')) return;
+    if (P.config && $('#paqCfg') && $('#paqCfg').checked) ['nombre', 'nif', 'idAcreedor', 'contrato'].forEach(k => { if (P.config[k]) c[k] = P.config[k]; });
+    const items = [], b = borrador();
+    R.ordenes.forEach((o, i) => {
+      const d = st.deudores.find(x => x.id === P.asig[i]);
+      d.nombre = o.nombre; d.iban = S.normIban(o.iban); d.bic = S.bicDeIban(o.iban) || d.bic || '';
+      d.pago = 'domiciliado'; d.previos = true; d.activo = true;
+      items.push(itemDe(d, R.nombre, o.importe));
+      if (!S.parseImporte(b.importes[d.id])) { b.importes[d.id] = centAStr(o.importe); b.excluir[d.id] = false; }
+    });
+    st.remesas = st.remesas.filter(x => x.nombre !== R.nombre);
+    st.remesas.push({ id: uid(), generado: new Date().toISOString(), importado: true, formatos: { core: true, c1914: true, b2b: false, c1944: false },
+      nombre: R.nombre, fechaGen: R.fechaGen, fechaCobro: R.fechaCobro, efectivo: [],
+      acreedor: { nombre: c.nombre, id: idAcr(), iban: S.normIban(c.iban), bic: (c.bic || '').toUpperCase(), d1: c.direccion, d2: c.cp + ' ' + c.localidad, d3: c.provincia, pais: 'ES' }, items });
+    guardar();
+    if (P.documento && P.documento.base64) {
+      const bin = atob(P.documento.base64), u8 = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      const b64 = x => { const t = atob(x), a = new Uint8Array(t.length); for (let i = 0; i < t.length; i++) a[i] = t.charCodeAt(i); return a; };
+      const prev = P.documento.preview ? new Blob([b64(P.documento.preview)], { type: 'image/png' }) : null;
+      await guardarDoc(R.nombre, new Blob([u8], { type: P.documento.mime || 'application/pdf' }), P.documento.nombre || (R.nombre + '.pdf'), 'pdf', prev);
+    }
+    cerrar(); tab = 'historial'; render(); window.scrollTo(0, 0);
+    toast(R.nombre + ' importada: ' + items.length + ' deudores');
+  }
+  function leerPaquete(file) {
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const P = JSON.parse(r.result);
+        if (P.tipo !== 'remesa-banco' || !P.remesa || !Array.isArray(P.remesa.ordenes)) throw new Error('formato');
+        paquete = P; P.asig = [];
+        P.remesa.ordenes.forEach((o, i) => { const id = sugerir(o); P.asig[i] = P.asig.includes(id) ? '' : id; });
+        dlgPaquete();
+      } catch (e) { alert('Este fichero no es un listado del banco preparado para la app.'); }
+    };
+    r.readAsText(file);
   }
 
   /* ---------- Pestaña Remesa ---------- */
@@ -548,6 +691,9 @@
       '<div><label>Año</label><input type="number" inputmode="numeric" data-b="anio" value="' + b.anio + '"></div></div>' +
       '<label>Fecha de cobro (siempre día 10)</label><select data-b="mesCobro">' + meses + '</select></div>' +
 
+      '<div class="card foto-card"><div class="grow"><h2 style="margin-bottom:4px">' + ico('fichero') + 'Documentos</h2><div class="muted">' +
+      (docIdx[nombre] ? docIdx[nombre] + ' guardados de ' + esc(nombre) : 'Fotos y listados de ' + esc(nombre)) + (b.lectura ? ', foto leída el ' + fmtFecha(b.lectura.fecha.slice(0, 10)) : '') + '</div></div>' +
+      '<button class="btn sec sm" data-act="docs" data-rem="' + esc(nombre) + '">Ver</button></div>' +
       '<div class="card foto-card"><div class="grow"><h2 style="margin-bottom:4px">' + ico('escanear') + 'Leer importes de una foto</h2>' +
       '<div class="muted">Fotografía el documento con los totales de cada vecino y revisa lo leído antes de aplicarlo.</div></div>' +
       '<button class="btn oro sm" data-act="foto">' + ico('camara') + 'Foto</button></div>' +
@@ -567,8 +713,29 @@
       '<div class="btns"><button class="btn oro" data-act="generar">' + ico('sello') + 'Generar ' + esc(nombre) + '</button></div></div>';
   }
 
+  let forzar = false;
   function generar() {
     const r = construir();
+    const L = borrador().lectura;
+    if (!r.errores.length && L && !forzar) {
+      const dif = [];
+      r.remesa.items.concat(r.efectivo.filter(e => e.importe)).forEach(i => {
+        const v = L.valores[i.deudorId];
+        if (v != null && v !== i.importe) dif.push(etiqueta(st.deudores.find(d => d.id === i.deudorId)) + ': foto ' + S.eur(v) + ', remesa ' + S.eur(i.importe));
+        if (v == null) dif.push(etiqueta(st.deudores.find(d => d.id === i.deudorId)) + ': no aparece en la foto');
+      });
+      L.dif = dif.length;
+      if (dif.length) {
+        abrir('<div class="card"><h2>' + ico('aviso') + 'No cuadra con la foto</h2><div class="muted">Foto leída el ' + fmtFecha(L.fecha.slice(0, 10)) + '</div>' +
+          '<div class="alert warn">' + ico('aviso') + '<ul>' + dif.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul></div>' +
+          '<div class="btns"><button class="btn sec" data-act="cerrar">Revisar importes</button><button class="btn oro" data-act="generarForzar">Generar igualmente</button></div></div>');
+        return;
+      }
+    }
+    forzar = false;
+    if (!r.errores.length) r.avisos.unshift(!L ? 'No hay foto del documento de este bimestre: los importes no se han comprobado con él.' :
+      L.dif ? 'Generada con ' + L.dif + (L.dif === 1 ? ' diferencia' : ' diferencias') + ' respecto a la foto del documento del ' + fmtFecha(L.fecha.slice(0, 10)) + '.' :
+      'Importes comprobados con la foto del documento del ' + fmtFecha(L.fecha.slice(0, 10)) + '.');
     if (r.errores.length) {
       abrir('<div class="card"><h2>' + ico('aviso') + 'Revisa antes de generar</h2><div class="alert err">' + ico('aviso') + '<ul>' + r.errores.map(e => '<li>' + esc(e) + '</li>').join('') + '</ul></div>' +
         (r.avisos.length ? '<div class="alert warn">' + ico('info') + '<ul>' + r.avisos.map(e => '<li>' + esc(e) + '</li>').join('') + '</ul></div>' : '') +
@@ -680,8 +847,8 @@
   /* ---------- Pestaña Historial ---------- */
   function vistaHistorial() {
     const rs = st.remesas.slice().sort((a, b) => b.fechaCobro.localeCompare(a.fechaCobro));
-    if (!rs.length) return '<div class="card"><h2>' + ico('historial') + 'Historial</h2><div class="empty">' + ico('historial') + 'Aún no has generado ninguna remesa. Prepárala en la pestaña Remesa.</div></div>';
-    return '<div class="card"><h2>' + ico('historial') + 'Historial</h2>' + rs.map(r => {
+    if (!rs.length) return '<div class="card"><h2>' + ico('historial') + 'Historial</h2><div class="empty">' + ico('historial') + 'Aún no has generado ninguna remesa. Prepárala en la pestaña Remesa o importa el listado de una remesa ya cobrada.<div class="btns"><button class="btn oro" data-act="paqImp">' + ico('bajar') + 'Importar listado del banco</button></div></div></div>';
+    return '<div class="card"><h2>' + ico('historial') + 'Historial<button class="btn sec sm" style="margin-left:auto" data-act="paqImp">' + ico('bajar') + 'Importar listado</button></h2>' + rs.map(r => {
       const t = r.items.reduce((s, i) => s + i.importe, 0);
       const ef = (r.efectivo || []).filter(e => e.importe > 0), pend = ef.filter(e => !e.cobrado);
       return '<div class="item"><div class="grow"><div class="name">' + esc(r.nombre) + '</div>' +
@@ -689,7 +856,9 @@
         '<div style="font-weight:700">Banco ' + S.eur(t) + (ef.length ? ' · Efectivo ' + S.eur(ef.reduce((s, e) => s + e.importe, 0)) : '') + '</div>' +
         (ef.length ? '<div class="muted" style="color:' + (pend.length ? 'var(--warn)' : 'var(--ok)') + '">' +
           (pend.length ? 'Efectivo pendiente: ' + pend.map(e => esc(e.etiqueta)).join(', ') + ' (' + S.eur(pend.reduce((s, e) => s + e.importe, 0)) + ')' : 'Efectivo cobrado completo') + '</div>' : '') +
+        (r.importado ? '<div class="muted">Importada del listado del banco</div>' : '') +
         '<div class="btns" style="margin-top:6px"><button class="btn sec sm" data-act="histFich" data-id="' + r.id + '">Ficheros</button>' +
+        '<button class="btn sec sm" data-act="docs" data-rem="' + esc(r.nombre) + '">Documentos' + (docIdx[r.nombre] ? ' (' + docIdx[r.nombre] + ')' : '') + '</button>' +
         '<button class="btn sec sm" data-act="histDetalle" data-id="' + r.id + '">' + (ef.length ? 'Detalle y efectivo' : 'Detalle') + '</button>' +
         '<button class="btn sec sm" data-act="histUsar" data-id="' + r.id + '">Usar importes</button>' +
         '<button class="btn danger sm" data-act="histBorrar" data-id="' + r.id + '">Borrar</button></div></div></div>';
@@ -726,9 +895,13 @@
       f('iban', 'IBAN de la comunidad', ' class="mono" autocapitalize="characters"') +
       (iban ? '<div class="muted" style="color:' + (ibanOk ? 'var(--ok)' : 'var(--err)') + '">' + (ibanOk ? 'IBAN correcto · entidad ' + iban.slice(4, 8) + ' · oficina ' + iban.slice(8, 12) : 'IBAN no válido') + '</div>' : '') +
       f('bic', 'BIC', ' autocapitalize="characters"') +
-      f('sufijo', 'Sufijo del acreedor (lo da el banco, normalmente 000)', ' inputmode="numeric" maxlength="3"') +
-      '<label>Identificador de acreedor SEPA (calculado)</label><div class="mono" style="font-size:16px;font-weight:700">' + (id ? esc(id) : '—') + '</div>' +
-      '<p class="muted">Compruébalo con el que figure en el contrato de remesas del Santander.</p></div>' +
+      (iban && iban.startsWith('ES') && iban.length !== 24 ? '<div class="alert warn">' + ico('aviso') + '<span>Un IBAN español tiene 24 caracteres y este tiene ' + iban.length + '.' +
+        (S.normIban(c.contrato) === iban ? ' Coincide con el nº de contrato de remesas, que no es la cuenta.' : '') + ' Cópialo del extracto o de la app del banco.</span></div>' : '') +
+      f('idAcreedor', 'Id Acreedor (asignado por el Santander)', ' class="mono" autocapitalize="characters" placeholder="ES00000H00000000"') +
+      (c.idAcreedor && c.nif && idAcrCalc() !== id ? '<div class="muted" style="color:var(--warn)">No coincide con el calculado a partir del NIF (' + esc(idAcrCalc()) + '). Se usará el del banco.</div>' :
+        c.idAcreedor ? '<div class="muted" style="color:var(--ok)">Se usa en todos los ficheros de remesa.</div>' : '<div class="muted">Si lo dejas vacío se calcula del NIF: ' + esc(idAcrCalc() || '—') + '</div>') +
+      f('contrato', 'Contrato de remesas', ' class="mono" autocapitalize="characters"') +
+      (c.idAcreedor ? '' : f('sufijo', 'Sufijo del acreedor (normalmente 000)', ' inputmode="numeric" maxlength="3"')) + '</div>' +
 
       '<div class="card"><h2>' + ico('remesa') + 'Remesas</h2>' +
       f('concepto', 'Concepto del recibo') +
@@ -738,6 +911,7 @@
 
       '<div class="card"><h2>' + ico('historial') + 'Copia de seguridad</h2><p class="muted">Guarda una copia en Archivos/iCloud de vez en cuando: si se borra la app, se pierden los datos.</p>' +
       '<div class="btns"><button class="btn sec" data-act="exportar">Exportar copia</button><button class="btn sec" data-act="importar">Importar copia</button></div>' +
+      '<div class="btns"><button class="btn sec" data-act="paqImp">' + ico('bajar') + 'Importar listado del banco</button></div>' +
       '<input type="file" id="fileImp" accept=".json,application/json" hidden>' +
       '<div class="btns"><button class="btn danger" data-act="reset">Borrar todos los datos</button></div></div>' +
       '<p class="muted" style="text-align:center">Adeudos Comunidad ' + VERSION + '</p>';
@@ -771,6 +945,14 @@
     else if (a === 'foto') { const i = $('#fotoImp'); i.value = ''; i.click(); }
     else if (a === 'ocrAplicar') aplicarLectura();
     else if (a === 'cargos') dlgCargos();
+    else if (a === 'docs' || a === 'docVolver') dlgDocs(el.dataset.rem);
+    else if (a === 'docAnadir') { docDestino = el.dataset.rem; const i = $('#docImp'); i.value = ''; i.click(); }
+    else if (a === 'docVer') verDoc(docsAbiertos[+el.dataset.i]);
+    else if (a === 'docBajar') { const d = docsAbiertos[+el.dataset.i]; compartirBlob(d.blob, d.nombre.replace(/[\/:]/g, '-') + (/\.\w{2,4}$/.test(d.nombre) ? '' : d.tipo === 'pdf' ? '.pdf' : '.jpg')); }
+    else if (a === 'docBorrar') { const d = docsAbiertos[+el.dataset.i]; if (!confirm('¿Borrar «' + d.nombre + '»?')) return; DB.del(d.id).then(refrescarDocs).then(() => { dlgDocs(d.remesa); render(); }); }
+    else if (a === 'paqImp') { const i = $('#paqImp'); i.value = ''; i.click(); }
+    else if (a === 'paqAplicar') aplicarPaquete();
+    else if (a === 'generarForzar') { forzar = true; cerrar(); generar(); }
     else if (a === 'guardarCargos') guardarCargos();
     else if (a === 'ir') { cerrar(); tab = el.dataset.tab; render(); window.scrollTo(0, 0); }
     else if (a === 'efectivoActual') {
@@ -821,6 +1003,13 @@
   document.addEventListener('change', e => {
     const t = e.target;
     if (t.id === 'fotoImp' && t.files[0]) { procesarFoto(t.files[0]); return; }
+    if (t.id === 'paqImp' && t.files[0]) { leerPaquete(t.files[0]); return; }
+    if (t.id === 'docImp' && t.files[0]) {
+      const f = t.files[0], tipo = /pdf/.test(f.type) || /\.pdf$/i.test(f.name) ? 'pdf' : /^image\//.test(f.type) ? 'foto' : 'otro';
+      guardarDoc(docDestino, f, f.name || (tipo === 'foto' ? 'Foto' : 'Documento'), tipo).then(() => { dlgDocs(docDestino); render(); });
+      return;
+    }
+    if (t.dataset.paq !== undefined) { paquete.asig[+t.dataset.paq] = t.value; dlgPaquete(); return; }
     if (t.dataset.cargo) {
       const d = st.deudores.find(x => x.id === t.value), inp = $('#nom_' + t.dataset.cargo);
       if (d && d.nombre && inp) inp.value = d.nombre;
@@ -876,7 +1065,7 @@
     } else if (t.dataset.cfg) {
       let v = t.value;
       if (t.dataset.cfg === 'iban') v = S.normIban(v);
-      if (t.dataset.cfg === 'nif' || t.dataset.cfg === 'bic') v = v.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (t.dataset.cfg === 'nif' || t.dataset.cfg === 'bic' || t.dataset.cfg === 'idAcreedor' || t.dataset.cfg === 'contrato') v = v.toUpperCase().replace(/[^A-Z0-9]/g, '');
       st.config[t.dataset.cfg] = v; guardar(); render();
     }
   });
@@ -932,5 +1121,6 @@
   } catch (e) {}
 
   render();
+  refrescarDocs().then(render);
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

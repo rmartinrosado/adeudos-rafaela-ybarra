@@ -68,12 +68,12 @@
       .replace(/[º°ª]/g, ' ').replace(/[|_]/g, ' ').replace(/\s+/g, ' ').trim();
   }
   // Importes con 2 decimales: 1.234,56 · 62,40 · 62.40 · 62, 40
-  const RX_IMP = /(\d{1,3}(?:[.\s]\d{3})+|\d+)\s?[,.]\s?(\d{2})(?!\d)/g;
+  const RX_IMP = /(\d{1,3}(?:\.\d{3})+|\d+)\s?[,.]\s?(\d{2})(?!\d)/g;
   function importes(linea) {
     const l = linea.replace(/(\d)[Oo](?=\d)/g, '$10').replace(/(\d)[lI](?=\d)/g, '$11');
     const out = []; let m;
     RX_IMP.lastIndex = 0;
-    while ((m = RX_IMP.exec(l))) out.push({ c: parseInt(m[1].replace(/[.\s]/g, ''), 10) * 100 + parseInt(m[2], 10), i: m.index, len: m[0].length });
+    while ((m = RX_IMP.exec(l))) out.push({ c: parseInt(m[1].replace(/\./g, ''), 10) * 100 + parseInt(m[2], 10), i: m.index, len: m[0].length });
     if (!out.length) { const e = l.match(/(\d{1,5})\s?(?:€|EUR)/i); if (e) out.push({ c: parseInt(e[1], 10) * 100, i: e.index, len: e[0].length }); }
     return out;
   }
