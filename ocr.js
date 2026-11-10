@@ -94,7 +94,7 @@
     if (m) { const u = m[1] + m[2]; if (ds.some(d => d.unidad === u)) return { u, por: 'unidad' }; }
     // Por nombre del local o del titular
     let mejor = null;
-    ds.forEach(d => {
+    ds.flatMap(d => [d.nombre, d.rotulo].filter(Boolean).map(n => ({ unidad: d.unidad, nombre: n }))).forEach(d => {
       const nom = norm(d.nombre); if (nom.length < 4) return;
       if (n.includes(nom)) { if (!mejor || nom.length > mejor.l) mejor = { u: d.unidad, por: 'nombre', l: nom.length }; return; }
       const t = nom.split(' ').filter(x => x.length >= 4);

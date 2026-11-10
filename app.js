@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v2.9';
+  const VERSION = 'v3.0';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -43,7 +43,7 @@
 
   /* ---------- Datos ---------- */
   function deudorBase(unidad, tipo, nombre, orden) {
-    return { id: uid(), unidad, tipo, nombre: nombre || '', nif: '', iban: '', bic: '',
+    return { id: uid(), unidad, tipo, nombre: nombre || '', rotulo: tipo === 'local' ? (nombre || '') : '', nif: '', iban: '', bic: '',
       mandato: 'RY5-' + unidad, fechaMandato: '2009-10-31', previos: false, activo: true, orden,
       pago: tipo === 'local' ? 'efectivo' : 'domiciliado' };
   }
@@ -110,7 +110,8 @@
     BASE.forEach(([u, tipo, nom], i) => {
       let d = st.deudores.find(x => x.unidad === u);
       if (!d) { d = deudorBase(u, tipo, nom, i); st.deudores.push(d); }
-      if (tipo === 'local' && nom && (!d.nombre || S.limpiar(d.nombre).toUpperCase() === S.limpiar(nom).toUpperCase())) d.nombre = nom;
+      // v3.0: rótulo (nombre comercial) del local, editable y separado del titular
+      if (tipo === 'local' && !d.rotulo) d.rotulo = d.nombre || nom;
       if (d.tipo !== tipo) d.tipo = tipo;
     });
   }
@@ -120,6 +121,7 @@
   function corto(d) { return d.tipo === 'local' ? 'L' + d.unidad.replace(/^L/, '') : d.unidad; }
   function ordenados() { return st.deudores.slice().sort((a, b) => (a.orden ?? 99) - (b.orden ?? 99)); }
   const esEf = d => d.pago === 'efectivo';
+  const nomVis = d => d.tipo === 'local' ? (d.rotulo || d.nombre || '') : (d.nombre || '');
   const centAStr = c => (c / 100).toFixed(2).replace('.', ',');
   function idAcr() { return S.idAcreedor(st.config.nif, st.config.sufijo); }
 
@@ -198,7 +200,7 @@
     const efectivo = ordenados().filter(d => d.activo && esEf(d)).map(d => {
       const imp = S.parseImporte(b.importes[d.id]);
       const ant = previa && (previa.efectivo || []).find(e => e.deudorId === d.id);
-      return { deudorId: d.id, unidad: d.unidad, nombre: d.nombre || etiqueta(d), etiqueta: etiqueta(d), importe: imp > 0 ? imp : 0,
+      return { deudorId: d.id, unidad: d.unidad, nombre: nomVis(d) || etiqueta(d), etiqueta: etiqueta(d), importe: imp > 0 ? imp : 0,
         cobrado: ant ? ant.cobrado : false, fechaPago: ant ? ant.fechaPago : '' };
     });
     const sinImp = efectivo.filter(e => !e.importe).map(e => e.etiqueta);
@@ -258,13 +260,13 @@
       let e;
       if (esEf(d)) {
         const x = rem && (rem.efectivo || []).find(y => y.deudorId === d.id && y.importe > 0);
-        e = x ? (x.cobrado ? 'hecho' : 'pendiente') : (d.nombre ? 'listo' : 'falta');
+        e = x ? (x.cobrado ? 'hecho' : 'pendiente') : (nomVis(d) ? 'listo' : 'falta');
       } else if (!d.nombre || !S.ibanValido(d.iban)) e = 'falta';
       else e = rem && rem.items.some(i => i.deudorId === d.id) ? 'hecho' : 'listo';
-      est[d.unidad] = { estado: e, id: d.id, nombre: d.nombre };
+      est[d.unidad] = { estado: e, id: d.id, nombre: nomVis(d) };
     });
     // Los dados de baja siguen en el dibujo (atenuados) para poder tocarlos y reactivarlos
-    st.deudores.filter(d => !d.activo && !est[d.unidad]).forEach(d => { est[d.unidad] = { estado: 'falta', id: d.id, nombre: d.nombre }; });
+    st.deudores.filter(d => !d.activo && !est[d.unidad]).forEach(d => { est[d.unidad] = { estado: 'falta', id: d.id, nombre: nomVis(d) }; });
     return { b, nombre, rem, banco, ef, efCob, est, ds };
   }
 
@@ -299,7 +301,7 @@
         const c = C[e.estado];
         const rot = String(e.nombre || '').trim().toLocaleUpperCase('es-ES');
         return '<rect x="' + (cx - 33) + '" y="200" width="66" height="9" rx="1.5" fill="#d4b57e"/>' +
-          (rot ? '<text x="' + cx + '" y="206.9" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="' + Math.min(6.6, 60 / (rot.length * 0.62)).toFixed(2) + '" font-weight="700" letter-spacing=".2" fill="#13223a">' + esc(rot) + '</text>' : '') +
+          (rot ? '<text x="' + cx + '" y="206.9" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="' + Math.min(6.6, 58 / (rot.length * 0.72)).toFixed(2) + '" font-weight="700" letter-spacing=".2" fill="#13223a">' + esc(rot) + '</text>' : '') +
           '<rect class="v" x="' + (cx - 31) + '" y="211" width="62" height="34" rx="2" fill="' + c[0] + '" stroke="' + c[1] + '"' + (e.estado === 'falta' ? ' stroke-dasharray="3 3"' : '') + (e.estado === 'hecho' ? ' filter="url(#brillo)"' : '') + '/>' +
           '<text x="' + cx + '" y="232" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="' + txt(e.estado) + '">' + 'Local ' + u.slice(1) + '</text>' +
           insignia(e.id, cx + 29, 212);
@@ -437,7 +439,7 @@
       const f = porId[d.id] || {}, v = L.valores[d.id];
       const chip = f.importe == null ? '<span class="chip errc">No encontrado</span>' : f.repetido ? '<span class="chip frst">Repetido</span>' : f.por === 'nombre' ? '<span class="chip ef">Por nombre</span>' : '<span class="chip okc">Leído</span>';
       return '<div class="item"><div class="unit' + (d.tipo === 'local' ? ' local' : '') + '">' + esc(corto(d)) + '</div>' +
-        '<div class="grow"><div class="name">' + esc(d.nombre || etiqueta(d)) + '</div><div>' + chip + (esEf(d) ? ' <span class="chip ef">Efectivo</span>' : '') + '</div>' +
+        '<div class="grow"><div class="name">' + esc(nomVis(d) || etiqueta(d)) + '</div><div>' + chip + (esEf(d) ? ' <span class="chip ef">Efectivo</span>' : '') + '</div>' +
         (f.linea ? '<div class="muted linea">' + esc(f.linea) + '</div>' : '') + '</div>' +
         '<input class="amount" inputmode="decimal" placeholder="0,00 €" data-ocr="' + d.id + '" value="' + (v > 0 ? centAStr(v) : '') + '"></div>';
     }).join('');
@@ -511,7 +513,7 @@
     const filasEf = efs.map(d => {
       const imp = S.parseImporte(b.importes[d.id]); if (imp > 0) totEf += imp;
       return '<div class="item"><div class="unit' + (d.tipo === 'local' ? ' local' : '') + '">' + esc(corto(d)) + '</div>' +
-        '<div class="grow"><div class="name">' + esc(d.nombre || etiqueta(d)) + '</div><div class="muted"><span class="chip ef">EFECTIVO</span></div></div>' +
+        '<div class="grow"><div class="name">' + esc(nomVis(d) || etiqueta(d)) + '</div><div class="muted"><span class="chip ef">EFECTIVO</span></div></div>' +
         '<input class="amount" inputmode="decimal" placeholder="0,00 €" data-imp="' + d.id + '" value="' + esc(b.importes[d.id] || '') + '"></div>';
     }).join('');
     const per = S.BIMESTRES.map((t, i) => '<option value="' + i + '"' + (i === b.idx ? ' selected' : '') + '>' + t + '</option>').join('');
@@ -585,17 +587,18 @@
   /* ---------- Pestaña Deudores ---------- */
   function vistaDeudores() {
     const fila = d => {
-      const ok = esEf(d) ? !!d.nombre : d.nombre && S.ibanValido(d.iban);
+      const ok = esEf(d) ? !!nomVis(d) : d.nombre && S.ibanValido(d.iban);
       const estado = !d.activo ? '<span class="chip">Baja</span>' : !ok ? '<span class="chip errc">Faltan datos</span>' :
         esEf(d) ? '<span class="chip ef">Efectivo</span>' : '<span class="chip okc">Domiciliado</span>';
       return '<div class="item" data-act="editar" data-id="' + d.id + '" style="cursor:pointer;' + (d.activo ? '' : 'opacity:.5') + '">' +
         '<div class="unit' + (d.tipo === 'local' ? ' local' : '') + '">' + esc(corto(d)) + '</div>' +
-        '<div class="grow"><div class="name">' + (d.nombre ? esc(d.nombre) : '<span class="muted" style="font-size:15px">Sin titular</span>') + '</div>' +
+        '<div class="grow"><div class="name">' + (nomVis(d) ? esc(nomVis(d)) : '<span class="muted" style="font-size:15px">Sin titular</span>') + '</div>' +
+        (d.tipo === 'local' && d.nombre && d.nombre !== d.rotulo ? '<div class="muted">Titular: ' + esc(d.nombre) + '</div>' : '') +
         '<div class="muted">' + (esEf(d) ? 'Paga en efectivo' : d.iban ? 'Cuenta ···' + esc(S.normIban(d.iban).slice(-4)) : 'Sin cuenta') + (d.nif ? ', ' + esc(d.nif) : '') + '</div></div>' +
         estado + '<span style="color:var(--muted);width:16px;flex:none">' + ico('flecha') + '</span></div>';
     };
     const ds = ordenados(), pisos = ds.filter(d => d.tipo !== 'local'), locs = ds.filter(d => d.tipo === 'local');
-    const cnt = l => l.filter(d => esEf(d) ? !!d.nombre : d.nombre && S.ibanValido(d.iban)).length + ' de ' + l.length + ' completos';
+    const cnt = l => l.filter(d => esEf(d) ? !!nomVis(d) : d.nombre && S.ibanValido(d.iban)).length + ' de ' + l.length + ' completos';
     return '<div class="card"><h2>' + ico('vecinos') + 'Viviendas<span class="h2r">' + cnt(pisos) + '</span></h2>' + (pisos.map(fila).join('') || '<div class="empty">No hay viviendas.</div>') + '</div>' +
       '<div class="card"><h2>' + ico('efectivo') + 'Locales comerciales<span class="h2r">' + cnt(locs) + '</span></h2>' + (locs.map(fila).join('') || '<div class="empty">No hay locales.</div>') + '</div>' +
       '<div class="btns" style="margin-top:0"><button class="btn" data-act="nuevo">' + ico('mas') + 'Añadir vecino o local</button></div>' +
@@ -613,7 +616,8 @@
       '<div><label>Piso / nº local</label><input name="unidad" value="' + esc(d.tipo === 'local' ? d.unidad.replace(/^L/, '') : d.unidad) + '" placeholder="1A ó 1" autocapitalize="characters"></div></div>') +
       '<label>Forma de pago</label><select name="pago"><option value="domiciliado"' + (!esEf(d) ? ' selected' : '') + '>Domiciliado en banco (va en la remesa)</option>' +
       '<option value="efectivo"' + (esEf(d) ? ' selected' : '') + '>Efectivo (no va en el fichero)</option></select>' +
-      '<label>Nombre o rótulo (titular de la cuenta si es domiciliado)</label><input name="nombre" value="' + esc(d.nombre) + '" autocomplete="off">' +
+      (d.tipo === 'local' || nuevo ? '<div id="campoRotulo"' + (d.tipo === 'local' ? '' : ' hidden') + '><label>Nombre del local (rótulo)</label><input name="rotulo" value="' + esc(d.rotulo || '') + '" placeholder="Ej.: DEPORTES GÁLVEZ" autocomplete="off"></div>' : '') +
+      '<label>' + (d.tipo === 'local' ? 'Titular (persona o empresa que paga)' : 'Nombre del titular') + '</label><input name="nombre" value="' + esc(d.nombre) + '" autocomplete="off">' +
       '<label>DNI / NIE / NIF</label><input name="nif" value="' + esc(d.nif) + '" autocapitalize="characters" autocomplete="off">' +
       '<div id="bancoCampos"' + (esEf(d) ? ' hidden' : '') + '>' +
       '<label>IBAN de cargo</label><input name="iban" class="mono" value="' + esc(S.fmtIban(d.iban)) + '" placeholder="ES00 0000 0000 0000 0000 0000" autocapitalize="characters" autocomplete="off">' +
@@ -646,7 +650,7 @@
     if (f.pago.value !== 'efectivo' && iban && !S.ibanValido(iban) && !confirm('El IBAN no es válido. ¿Guardar de todos modos?')) return;
     const nif = f.nif.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (nif && !S.validarNif(nif).ok && !confirm('El DNI/NIF no parece correcto. ¿Guardar de todos modos?')) return;
-    const datos = { pago: f.pago.value, tipo, unidad, nombre: f.nombre.value.trim(), nif, iban, bic: f.bic.value.toUpperCase().replace(/[^A-Z0-9]/g, '') || S.bicDeIban(iban),
+    const datos = { pago: f.pago.value, tipo, unidad, nombre: f.nombre.value.trim(), rotulo: tipo === 'local' && f.rotulo ? f.rotulo.value.trim() : '', nif, iban, bic: f.bic.value.toUpperCase().replace(/[^A-Z0-9]/g, '') || S.bicDeIban(iban),
       mandato: S.limpiar(f.mandato.value).toUpperCase() || ('RY5-' + unidad), fechaMandato: f.fechaMandato.value, previos: f.previos.checked, activo: f.activo.checked };
     if (id) Object.assign(st.deudores.find(x => x.id === id), datos);
     else st.deudores.push(Object.assign(deudorBase(unidad, tipo, '', st.deudores.length), datos));
@@ -840,7 +844,8 @@
       const e = r.efectivo.find(x => x.deudorId === did);
       e.cobrado = t.checked; e.fechaPago = t.checked ? S.hoyIso() : '';
       const dl = $('#dlg'), y = dl.scrollTop; guardar(); detalle(r); dl.scrollTop = y; render();
-    } else if (t.form && t.form.id === 'fd' && t.name === 'pago') { $('#bancoCampos').hidden = t.value === 'efectivo'; }
+    } else if (t.form && t.form.id === 'fd' && t.name === 'tipo') { const c = $('#campoRotulo'); if (c) c.hidden = t.value !== 'local'; }
+    else if (t.form && t.form.id === 'fd' && t.name === 'pago') { $('#bancoCampos').hidden = t.value === 'efectivo'; }
     else if (t.dataset.incl) { borrador().excluir[t.dataset.incl] = !t.checked; guardar(); render(); }
     else if (t.dataset.imp) {
       const c = S.parseImporte(t.value);
