@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v2.8';
+  const VERSION = 'v2.9';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -75,9 +75,9 @@
   function normUnidad(tipo, raw) {
     const t = S.limpiar(raw).toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (!t) return '';
-    if (tipo === 'local') { const m = t.match(/(\d+)/); return m ? 'L' + parseInt(m[1], 10) : 'L' + t.replace(/^L(OCAL)?/, ''); }
+    if (tipo === 'local') { const m = t.match(/(\d+)/); return m ? 'L' + parseInt(m[1], 10) : ''; }
     const m = t.replace(/^PISO/, '').match(/^(\d+)O?([A-Z])$/);
-    return m ? parseInt(m[1], 10) + m[2] : t;
+    return m ? parseInt(m[1], 10) + m[2] : '';
   }
   function migrar() {
     // v2.6: repara códigos de unidad mal guardados (p. ej. «LOCAL1» en vez de «L1»)
@@ -85,6 +85,23 @@
     st.deudores.forEach(d => {
       const u = normUnidad(d.tipo, d.unidad);
       if (u && u !== d.unidad && !st.deudores.some(x => x !== d && x.unidad === u)) d.unidad = u;
+    });
+    // v2.9: unidades sin número (p. ej. «LALIMENTACION», al escribir el nombre en el nº de local) → vuelven a su local
+    const clave = x => S.limpiar(x || '').toUpperCase().replace(/[^A-Z]/g, '');
+    const usado = x => st.remesas.some(r => r.items.some(i => i.deudorId === x.id) || (r.efectivo || []).some(e => e.deudorId === x.id && e.importe > 0));
+    const vacio = (x, nom) => !x.nif && !x.iban && (!x.nombre || clave(x.nombre) === clave(nom)) && !usado(x);
+    const valida = x => x.tipo === 'local' ? /^L\d+$/.test(x.unidad) : /^\d+[A-Z]$/.test(x.unidad);
+    st.deudores.filter(d => !valida(d)).forEach(d => {
+      const cand = BASE.filter(b => b[1] === d.tipo);
+      let t = cand.find(b => b[2] && (clave(d.unidad).includes(clave(b[2])) || clave(d.nombre) === clave(b[2])));
+      if (!t) {
+        const libres = cand.filter(b => { const o = st.deudores.find(x => x !== d && x.unidad === b[0]); return !o || vacio(o, b[2]); });
+        if (libres.length === 1) t = libres[0];
+      }
+      if (!t) return;
+      const o = st.deudores.find(x => x !== d && x.unidad === t[0]);
+      if (o && vacio(o, t[2])) st.deudores = st.deudores.filter(x => x !== o);
+      if (!st.deudores.some(x => x !== d && x.unidad === t[0])) d.unidad = t[0];
     });
     // v1.1: forma de pago por deudor (los locales pagan en efectivo)
     st.deudores.forEach(d => { if (!d.pago) d.pago = d.tipo === 'local' ? 'efectivo' : 'domiciliado'; });
@@ -589,11 +606,14 @@
     const nuevo = !d;
     d = d || deudorBase('', 'piso', '', st.deudores.length);
     abrir('<div class="card"><h2>' + ico('vecinos') + (nuevo ? 'Nuevo vecino o local' : esc(etiqueta(d))) + '</h2><form id="fd" data-id="' + (nuevo ? '' : d.id) + '">' +
+      (!nuevo && esBase(d) ?
+        '<input type="hidden" name="tipo" value="' + d.tipo + '"><input type="hidden" name="unidad" value="' + esc(d.unidad) + '">' +
+        '<div class="item" style="border:0;padding:4px 0 0"><div class="unit' + (d.tipo === 'local' ? ' local' : '') + '">' + esc(corto(d)) + '</div><div class="grow"><b>' + esc(etiqueta(d)) + '</b><div class="muted">' + (d.tipo === 'local' ? 'Local' : 'Vivienda') + ' del edificio: su número no se cambia</div></div></div>' :
       '<div class="row"><div><label>Tipo</label><select name="tipo"><option value="piso"' + (d.tipo === 'piso' ? ' selected' : '') + '>Piso</option><option value="local"' + (d.tipo === 'local' ? ' selected' : '') + '>Local</option></select></div>' +
-      '<div><label>Piso / nº local</label><input name="unidad" value="' + esc(d.tipo === 'local' ? d.unidad.replace(/^L/, '') : d.unidad) + '" placeholder="1A ó 1" autocapitalize="characters"></div></div>' +
+      '<div><label>Piso / nº local</label><input name="unidad" value="' + esc(d.tipo === 'local' ? d.unidad.replace(/^L/, '') : d.unidad) + '" placeholder="1A ó 1" autocapitalize="characters"></div></div>') +
       '<label>Forma de pago</label><select name="pago"><option value="domiciliado"' + (!esEf(d) ? ' selected' : '') + '>Domiciliado en banco (va en la remesa)</option>' +
       '<option value="efectivo"' + (esEf(d) ? ' selected' : '') + '>Efectivo (no va en el fichero)</option></select>' +
-      '<label>Nombre (titular de la cuenta si es domiciliado)</label><input name="nombre" value="' + esc(d.nombre) + '" autocomplete="off">' +
+      '<label>Nombre o rótulo (titular de la cuenta si es domiciliado)</label><input name="nombre" value="' + esc(d.nombre) + '" autocomplete="off">' +
       '<label>DNI / NIE / NIF</label><input name="nif" value="' + esc(d.nif) + '" autocapitalize="characters" autocomplete="off">' +
       '<div id="bancoCampos"' + (esEf(d) ? ' hidden' : '') + '>' +
       '<label>IBAN de cargo</label><input name="iban" class="mono" value="' + esc(S.fmtIban(d.iban)) + '" placeholder="ES00 0000 0000 0000 0000 0000" autocapitalize="characters" autocomplete="off">' +
