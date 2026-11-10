@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v2.5';
+  const VERSION = 'v2.6';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -51,7 +51,7 @@
     const pisos = ['1A', '1B', '1C', '2A', '2B', '2C', '3A', '3B', '3C'];
     const d = pisos.map((p, i) => deudorBase(p, 'piso', '', i));
     d.push(deudorBase('L1', 'local', 'DEPORTES GÁLVEZ', 9));
-    d.push(deudorBase('L2', 'local', 'Locutorio', 10));
+    d.push(deudorBase('L2', 'local', 'LOCUTORIO', 10));
     d.push(deudorBase('L3', 'local', 'Alimentación', 11));
     return {
       config: {
@@ -68,7 +68,20 @@
   const dflt = defaults();
   st.config = Object.assign({}, dflt.config, st.config);
   migrar(); guardar();
+  // Código de unidad normalizado: «Local 1», «L-1», «1» → L1 · «1º A», «1-A», «piso 1a» → 1A
+  function normUnidad(tipo, raw) {
+    const t = S.limpiar(raw).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!t) return '';
+    if (tipo === 'local') { const m = t.match(/(\d+)/); return m ? 'L' + parseInt(m[1], 10) : 'L' + t.replace(/^L(OCAL)?/, ''); }
+    const m = t.replace(/^PISO/, '').match(/^(\d+)O?([A-Z])$/);
+    return m ? parseInt(m[1], 10) + m[2] : t;
+  }
   function migrar() {
+    // v2.6: repara códigos de unidad mal guardados (p. ej. «LOCAL1» en vez de «L1»)
+    st.deudores.forEach(d => {
+      const u = normUnidad(d.tipo, d.unidad);
+      if (u && u !== d.unidad && !st.deudores.some(x => x !== d && x.unidad === u)) d.unidad = u;
+    });
     // v1.1: forma de pago por deudor (los locales pagan en efectivo)
     st.deudores.forEach(d => { if (!d.pago) d.pago = d.tipo === 'local' ? 'efectivo' : 'domiciliado'; });
     st.remesas.forEach(r => { if (!r.efectivo) r.efectivo = []; });
@@ -80,6 +93,13 @@
         st.deudores.push(l1);
       } else if (!l1.nombre || S.limpiar(l1.nombre).toUpperCase() === 'DEPORTES GALVEZ') l1.nombre = 'DEPORTES GÁLVEZ';
       st.config.migL1 = true;
+    }
+    // v2.6: Local 2 = LOCUTORIO (se añade si no existe)
+    if (!st.config.migL2) {
+      let l2 = st.deudores.find(d => d.unidad === 'L2');
+      if (!l2) st.deudores.push(deudorBase('L2', 'local', 'LOCUTORIO', 10));
+      else if (!l2.nombre || S.limpiar(l2.nombre).toUpperCase() === 'LOCUTORIO') l2.nombre = 'LOCUTORIO';
+      st.config.migL2 = true;
     }
   }
   function guardar() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { toast('No se pudo guardar en el dispositivo'); } }
@@ -231,6 +251,8 @@
       else e = rem && rem.items.some(i => i.deudorId === d.id) ? 'hecho' : 'listo';
       est[d.unidad] = { estado: e, id: d.id, nombre: d.nombre };
     });
+    // Los dados de baja siguen en el dibujo (atenuados) para poder tocarlos y reactivarlos
+    st.deudores.filter(d => !d.activo && !est[d.unidad]).forEach(d => { est[d.unidad] = { estado: 'falta', id: d.id, nombre: d.nombre }; });
     return { b, nombre, rem, banco, ef, efCob, est, ds };
   }
 
@@ -601,9 +623,8 @@
   }
   function guardarDeudor(f) {
     const id = f.dataset.id, tipo = f.tipo.value;
-    let unidad = S.limpiar(f.unidad.value).toUpperCase().replace(/\s/g, '');
-    if (!unidad) { alert('Indica el piso o el número de local.'); return; }
-    if (tipo === 'local') unidad = 'L' + unidad.replace(/^L/, '');
+    const unidad = normUnidad(tipo, f.unidad.value);
+    if (!unidad) { alert(tipo === 'local' ? 'Indica el número del local (por ejemplo 1).' : 'Indica el piso (por ejemplo 1A).'); return; }
     if (st.deudores.some(x => x.unidad === unidad && x.id !== id)) { alert('Ya existe un deudor para ' + unidad + '.'); return; }
     const iban = S.normIban(f.iban.value);
     if (f.pago.value !== 'efectivo' && iban && !S.ibanValido(iban) && !confirm('El IBAN no es válido. ¿Guardar de todos modos?')) return;
