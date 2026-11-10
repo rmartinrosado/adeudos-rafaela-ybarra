@@ -3,7 +3,7 @@
   'use strict';
   const S = window.SEPA;
   const KEY = 'adeudosRY5_v1';
-  const VERSION = 'v3.0';
+  const VERSION = 'v3.1';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -52,7 +52,7 @@
     const d = pisos.map((p, i) => deudorBase(p, 'piso', '', i));
     d.push(deudorBase('L1', 'local', 'DEPORTES GÁLVEZ', 9));
     d.push(deudorBase('L2', 'local', 'LOCUTORIO', 10));
-    d.push(deudorBase('L3', 'local', 'Alimentación', 11));
+    d.push(deudorBase('L3', 'local', 'FRUTERÍA', 11));
     return {
       config: {
         nombre: 'Comunidad de Propietarios Av. de Rafaela Ybarra 5', nif: '', sufijo: '000',
@@ -68,7 +68,7 @@
   const dflt = defaults();
   st.config = Object.assign({}, dflt.config, st.config);
   const BASE = ['1A', '1B', '1C', '2A', '2B', '2C', '3A', '3B', '3C'].map(u => [u, 'piso', ''])
-    .concat([['L1', 'local', 'DEPORTES GÁLVEZ'], ['L2', 'local', 'LOCUTORIO'], ['L3', 'local', 'ALIMENTACIÓN']]);
+    .concat([['L1', 'local', 'DEPORTES GÁLVEZ'], ['L2', 'local', 'LOCUTORIO'], ['L3', 'local', 'FRUTERÍA']]);
   const esBase = d => BASE.some(b => b[0] === d.unidad);
   migrar(); guardar();
   // Código de unidad normalizado: «Local 1», «L-1», «1» → L1 · «1º A», «1-A», «piso 1a» → 1A
@@ -112,8 +112,14 @@
       if (!d) { d = deudorBase(u, tipo, nom, i); st.deudores.push(d); }
       // v3.0: rótulo (nombre comercial) del local, editable y separado del titular
       if (tipo === 'local' && !d.rotulo) d.rotulo = d.nombre || nom;
+      // v3.1: rótulos indicados por el administrador (una sola vez; luego se pueden editar)
+      if (tipo === 'local' && !st.config.migRot31) {
+        if (!d.nombre || clave(d.nombre) === clave(d.rotulo)) d.nombre = nom;
+        d.rotulo = nom;
+      }
       if (d.tipo !== tipo) d.tipo = tipo;
     });
+    st.config.migRot31 = true;
   }
   function guardar() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { toast('No se pudo guardar en el dispositivo'); } }
 
@@ -293,6 +299,20 @@
       const l = id && id === st.config.presidenteId ? 'P' : id && id === st.config.vicepresidenteId ? 'V' : '';
       return l ? '<circle cx="' + x + '" cy="' + y + '" r="8" fill="#13223a" stroke="#e2c995" stroke-width="1.4"/><text x="' + x + '" y="' + (y + 4) + '" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="10" font-weight="700" fill="#e2c995">' + l + '</text>' : '';
     };
+    // Nombre del local en el escaparate: una o dos líneas que caben en 56 px
+    const escaparate = (t, cx, col) => {
+      const ancho = (str, fs) => str.length * fs * 0.66;
+      let lineas = [t];
+      if (ancho(t, 10.5) > 56 && t.includes(' ')) {
+        const p = t.split(' '); let mejor = null;
+        for (let i = 1; i < p.length; i++) { const a = p.slice(0, i).join(' '), b = p.slice(i).join(' '), m = Math.max(a.length, b.length); if (!mejor || m < mejor.m) mejor = { m, l: [a, b] }; }
+        lineas = mejor.l;
+      }
+      const larga = Math.max(...lineas.map(l => l.length));
+      const fs = Math.max(6, Math.min(lineas.length > 1 ? 10 : 11.5, 56 / (larga * 0.66)));
+      const y0 = lineas.length > 1 ? 226 : 232;
+      return lineas.map((l, i) => '<text x="' + cx + '" y="' + (y0 + i * (fs + 2)) + '" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="' + fs.toFixed(2) + '" font-weight="700" fill="' + col + '">' + esc(l) + '</text>').join('');
+    };
     // Bajos: Local 1, Local 2, portal, Local 3
     const huecos = { L1: 53, L2: 124, L3: 267 };
     ['L1', 'L2', 'L3'].forEach(u => {
@@ -301,9 +321,9 @@
         const c = C[e.estado];
         const rot = String(e.nombre || '').trim().toLocaleUpperCase('es-ES');
         return '<rect x="' + (cx - 33) + '" y="200" width="66" height="9" rx="1.5" fill="#d4b57e"/>' +
-          (rot ? '<text x="' + cx + '" y="206.9" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="' + Math.min(6.6, 58 / (rot.length * 0.72)).toFixed(2) + '" font-weight="700" letter-spacing=".2" fill="#13223a">' + esc(rot) + '</text>' : '') +
+          '<text x="' + cx + '" y="207" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="6.6" font-weight="700" letter-spacing=".6" fill="#13223a">LOCAL ' + u.slice(1) + '</text>' +
           '<rect class="v" x="' + (cx - 31) + '" y="211" width="62" height="34" rx="2" fill="' + c[0] + '" stroke="' + c[1] + '"' + (e.estado === 'falta' ? ' stroke-dasharray="3 3"' : '') + (e.estado === 'hecho' ? ' filter="url(#brillo)"' : '') + '/>' +
-          '<text x="' + cx + '" y="232" text-anchor="middle" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="' + txt(e.estado) + '">' + 'Local ' + u.slice(1) + '</text>' +
+          escaparate(rot || 'LOCAL ' + u.slice(1), cx, txt(e.estado)) +
           insignia(e.id, cx + 29, 212);
       });
     });
